@@ -1,0 +1,62 @@
+name: smart_house
+description: "Smart House — Дом под контролем"
+publish_to: 'none'
+version: 1.0.7+8
+
+environment:
+  sdk: '>=3.3.4 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  http: ^1.2.1
+  http_parser: ^4.0.2
+  shared_preferences: ^2.2.3
+  flutter_secure_storage: ^9.2.2
+  # 4.1.0 uses AuthenticationServices APIs available only in newer Xcode.
+  # 3.1.x keeps the same Dart API and supports Xcode 14.2 on macOS Monterey.
+  flutter_web_auth_2: ^3.1.2
+  multicast_dns: ^0.3.2+7
+  # 8.0.7 fixes plugin metadata while remaining compatible with Firebase's
+  # web 0.5.x dependency used by this project.
+  file_picker: 8.0.7
+  url_launcher: ^6.3.1
+  flutter_local_notifications: ^17.2.3
+  package_info_plus: ^8.0.2
+  google_fonts: ^6.2.1
+  material_design_icons_flutter: 7.0.7296
+  firebase_core: ^2.27.1
+  firebase_messaging: ^14.7.21
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/smart_home_interior.jpg
+    - assets/images/room_living.jpg
+    - assets/images/room_kitchen.jpg
+    - assets/images/room_bedroom.jpg
+    - assets/images/room_bathroom.jpg
+    - assets/images/room_office.jpg
+    - assets/images/room_hallway.jpg
+    - assets/images/devices/light.webp
+    - assets/images/devices/light_cool.png
+    - assets/images/devices/light_warm.png
+    - assets/images/devices/camera.webp
+    - assets/images/devices/socket.webp
+    - assets/images/devices/thermostat.webp
+    - assets/images/devices/motion_sensor.webp
+    - assets/images/devices/smoke_sensor.webp
+    - assets/images/devices/leak_sensor.webp
+    - assets/images/devices/air_conditioner.webp
+    - assets/images/devices/smart_lock.webp
+    - assets/images/devices/hub.webp
+    - assets/images/devices/temperature_humidity.png
+    - assets/images/devices/rgb_strip.png

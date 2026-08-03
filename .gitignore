@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+uploads/
+frontend/.dart_tool/
+frontend/build/
+frontend/tmp/
+backend/coverage/
+*.log
+
+# Environment-specific Firebase client configuration.
+frontend/android/app/google-services.json
+frontend/ios/Runner/GoogleService-Info.plist
