@@ -66,14 +66,42 @@ class _HomeAssistantOnboardingScreenState
   Future<void> restoreOrDiscover() async {
     if (kIsWeb) {
       selected = await oauth.getPendingBaseUrl();
+      // handle web OAuth callback
       if (Uri.base.path == '/ha-oauth-web-callback' &&
           Uri.base.queryParameters['code'] != null) {
         setState(() => step = _Step.connecting);
         await connect();
         return;
       }
+      // handle one-time login deep link for web
+      if (Uri.base.path == '/one-time-login' &&
+          Uri.base.queryParameters['token'] != null) {
+        setState(() => step = _Step.connecting);
+        try {
+          await api.oneTimeLogin(Uri.base.queryParameters['token']!);
+          if (!mounted) return;
+          widget.onConnected();
+          return;
+        } catch (e) {
+          // fall through to prepare web UI with error
+          if (!mounted) return;
+          setState(() => error = e.toString());
+        }
+      }
+      await _prepareWeb();
+      return;
     }
     await search();
+  }
+
+  Future<void> _prepareWeb() async {
+    if (!mounted) return;
+    setState(() {
+      step = _Step.servers;
+      error = 'Автопоиск Home Assistant недоступен в браузере';
+      servers = const [];
+      selected = null;
+    });
   }
 
   Future<void> search() async {
@@ -141,6 +169,7 @@ class _HomeAssistantOnboardingScreenState
       error = null;
     });
     try {
+      final connectionClientId = oauth.clientId;
       final (code, _) = await oauth.handleCallback(baseUrl: url);
       final token = await oauth.exchangeCodeForToken(baseUrl: url, code: code);
       final connection = HomeAssistantConnection(
@@ -148,6 +177,7 @@ class _HomeAssistantOnboardingScreenState
         userId: widget.session.id,
         houseId: '',
         baseUrl: url,
+        clientId: connectionClientId,
         accessToken: token.accessToken,
         refreshToken: token.refreshToken,
         expiresAt: DateTime.now().add(Duration(seconds: token.expiresIn)),
@@ -160,7 +190,7 @@ class _HomeAssistantOnboardingScreenState
           accessToken: token.accessToken,
           refreshToken: token.refreshToken,
           expiresAt: connection.expiresAt,
-          clientId: oauth.clientId);
+          clientId: connectionClientId);
       await oauth.clearPendingBaseUrl();
       if (mounted) setState(() => step = _Step.success);
     } catch (exception) {
@@ -284,11 +314,11 @@ class _HomeAssistantOnboardingScreenState
           const SizedBox(height: 18),
           const Text('АВТОРИЗАЦИЯ', style: _kicker),
           const SizedBox(height: 9),
-          const Text('Подключение к\nHome Assistant',
+          const Text('Подключение к\nSmart House Hub',
               textAlign: TextAlign.center, style: _title),
           const SizedBox(height: 13),
           const Text(
-              'Вы будете перенаправлены на защищённую\nстраницу авторизации.',
+              'Аккаунт Smart House будет безопасно связан\nс локальным хабом. Второй вход не потребуется.',
               textAlign: TextAlign.center,
               style: _body),
           const Spacer(),
@@ -302,7 +332,13 @@ class _HomeAssistantOnboardingScreenState
                     style: const TextStyle(
                         color: Color(0xFFFF8B8B), fontSize: 12))),
           const _ConnectionSteps(active: 1),
-          const SizedBox(height: 25),
+          const SizedBox(height: 16),
+          const Text(
+            'После нажатия «Продолжить» откроется браузер для входа в Home Assistant. После успешного завершения вы вернётесь в приложение.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white60, fontSize: 14),
+          ),
+          const SizedBox(height: 24),
           _PrimaryButton(label: 'Продолжить', onTap: connect),
         ]),
       );
@@ -361,7 +397,7 @@ class _RadarPainter extends CustomPainter {
     canvas.drawLine(
         c, c + Offset(math.cos(a), math.sin(a)) * size.width * .46, beam);
     final dot = Paint()..color = _orangeSoft;
-    final count = math.max(points, 3);
+    final count = points.clamp(0, 8);
     for (var i = 0; i < count; i++) {
       final da = i * 2.15 + .7;
       canvas.drawCircle(

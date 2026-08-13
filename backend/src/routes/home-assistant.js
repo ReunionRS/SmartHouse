@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { randomUUID } from 'crypto';
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import { config } from '../config.js';
 import { pool } from '../db.js';
 import { asyncRoute, normalizeBaseUrl } from '../lib/http.js';
@@ -19,7 +19,124 @@ oauthRouter.get('/ha-oauth-web-callback', (req, res) => {
 });
 
 const router = Router();
+
+const pairingTokenHash = (token) =>
+  createHash('sha256').update(token, 'utf8').digest('hex');
+
+const hasValidPairingSecret = (value) => {
+  const supplied = Buffer.from(String(value || ''), 'utf8');
+  const expected = Buffer.from(config.haPairingSecret, 'utf8');
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+};
+
+const hasValidHubProof = (proof, expectedHubId) => {
+  try {
+    const [encodedPayload, encodedSignature, extra] = String(proof || '').split('.');
+    if (!encodedPayload || !encodedSignature || extra) return false;
+    const supplied = Buffer.from(encodedSignature, 'base64url');
+    const expected = createHmac('sha256', config.haPairingSecret)
+      .update(encodedPayload, 'utf8')
+      .digest();
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return false;
+    const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+    const issuedAt = Number(payload.issuedAt);
+    const ageSeconds = Math.abs(Date.now() / 1000 - issuedAt);
+    return payload.hubId === expectedHubId
+      && typeof payload.nonce === 'string'
+      && payload.nonce.length >= 16
+      && Number.isFinite(issuedAt)
+      && ageSeconds <= 5 * 60;
+  } catch {
+    return false;
+  }
+};
+
+router.post('/pairing-sessions/consume', asyncRoute(async (req, res) => {
+  if (!hasValidPairingSecret(req.get('x-smart-house-pairing-secret'))) {
+    return res.status(401).json({ error: 'Недействительный ключ хаба' });
+  }
+
+  const token = String(req.body.token || '');
+  const hubId = String(req.body.hubId || '').trim();
+  if (!token || !hubId) {
+    return res.status(400).json({ error: 'Токен и идентификатор хаба обязательны' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT session.id, users.id AS user_id, users.email, users.fio
+       FROM ha_pairing_sessions AS session
+       JOIN users ON users.id = session.user_id
+       WHERE session.token_hash = $1 AND session.hub_id = $2
+         AND session.consumed_at IS NULL AND session.expires_at > NOW()
+       FOR UPDATE OF session`,
+      [pairingTokenHash(token), hubId],
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(401).json({ error: 'Сессия подключения недействительна или истекла' });
+    }
+    await client.query(
+      'UPDATE ha_pairing_sessions SET consumed_at = NOW() WHERE id = $1',
+      [rows[0].id],
+    );
+    await client.query('COMMIT');
+
+    // Create a one-time token to allow the client app to log in automatically.
+    const oneTimeToken = randomBytes(32).toString('base64url');
+    const oneTimeExpiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    await pool.query(
+      `INSERT INTO ha_one_time_tokens (id, user_id, token_hash, expires_at)
+       VALUES ($1, $2, $3, $4)`,
+      [randomUUID(), rows[0].user_id, pairingTokenHash(oneTimeToken), oneTimeExpiresAt.toISOString()],
+    );
+
+    const deepLink = `smarthouse://one-time-login?token=${oneTimeToken}`;
+    const webRedirect = `${(config.haWebAppUrl || 'http://localhost:5173').replace(/\/$/, '')}/one-time-login?token=${oneTimeToken}`;
+
+    return res.json({
+      user: {
+        id: rows[0].user_id,
+        email: rows[0].email,
+        name: rows[0].fio || rows[0].email,
+      },
+      oneTime: {
+        deepLink,
+        webRedirect,
+        expiresAt: oneTimeExpiresAt.toISOString(),
+      },
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
 router.use(authRequired);
+
+router.post('/pairing-sessions', asyncRoute(async (req, res) => {
+  const hubId = String(req.body.hubId || '').trim();
+  const pairingProof = String(req.body.pairingProof || '');
+  if (!hubId || hubId.length > 128) {
+    return res.status(400).json({ error: 'Некорректный идентификатор хаба' });
+  }
+  if (!hasValidHubProof(pairingProof, hubId)) {
+    return res.status(401).json({ error: 'Не удалось подтвердить локальный хаб' });
+  }
+
+  const token = randomBytes(32).toString('base64url');
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+  await pool.query(
+    `INSERT INTO ha_pairing_sessions (id, user_id, hub_id, token_hash, expires_at)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [randomUUID(), req.user.id, hubId, pairingTokenHash(token), expiresAt.toISOString()],
+  );
+  res.status(201).json({ token, hubId, expiresAt: expiresAt.toISOString() });
+}));
 router.get('/connection', asyncRoute(async (req, res) => {
   const connection = await getConnection(req.user.id);
   if (!connection) return res.json({ connected: false });

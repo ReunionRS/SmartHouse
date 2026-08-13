@@ -43,6 +43,12 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Smart House использует локальную сеть для поиска Home Assistant и подключения к умному дому.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_home-assistant._tcp</string>
+	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

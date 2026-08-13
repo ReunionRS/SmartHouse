@@ -1,4 +1,7 @@
 .DS_Store
+.vscode/
+__pycache__/
+*.py[cod]
 .env
 .env.*
 !.env.example
@@ -13,3 +16,7 @@ backend/coverage/
 # Environment-specific Firebase client configuration.
 frontend/android/app/google-services.json
 frontend/ios/Runner/GoogleService-Info.plist
+
+# Home Assistant runtime data; keep only the versioned base configuration.
+ha/config/*
+!ha/config/configuration.yaml

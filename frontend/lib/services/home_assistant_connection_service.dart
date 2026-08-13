@@ -95,6 +95,8 @@ class HomeAssistantConnectionService {
       final refreshed = await _authService.refreshAccessToken(
         baseUrl: connection.baseUrl,
         refreshToken: connection.refreshToken,
+        clientIdOverride:
+            connection.clientId.isEmpty ? null : connection.clientId,
       );
 
       final updated = HomeAssistantConnection(
@@ -102,6 +104,7 @@ class HomeAssistantConnectionService {
         userId: connection.userId,
         houseId: connection.houseId,
         baseUrl: connection.baseUrl,
+        clientId: connection.clientId,
         accessToken: refreshed.accessToken,
         refreshToken: refreshed.refreshToken,
         expiresAt: DateTime.now().add(Duration(seconds: refreshed.expiresIn)),

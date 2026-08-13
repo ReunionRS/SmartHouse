@@ -1,0 +1,14 @@
+default_config:
+
+smart_house:
+
+homeassistant:
+  name: Smart House
+  auth_providers:
+    - type: smart_house
+      name: Smart House
+      backend_url: !env_var SMART_HOUSE_BACKEND_URL
+      hub_id: !env_var SMART_HOUSE_HUB_ID
+      pairing_secret: !env_var HA_PAIRING_SECRET
+    # Development and recovery fallback. This will be disabled in release images.
+    - type: homeassistant

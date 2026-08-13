@@ -146,6 +146,24 @@ class AuthService {
     return session;
   }
 
+  Future<AppSession> oneTimeLogin(String token) async {
+    final response = await http
+        .post(
+          Uri.parse('${ApiConfig.baseUrl}/api/auth/one-time-login'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'token': token}),
+        )
+        .timeout(const Duration(seconds: 15));
+
+    final body = _decodeMap(response.body);
+    if (response.statusCode != 200) {
+      throw Exception((body['error'] ?? 'Ошибка авто-входа').toString());
+    }
+    final session = _sessionFromResponse(body, fallbackEmail: '');
+    await _saveSession(session);
+    return session;
+  }
+
   AppSession _sessionFromResponse(Map<String, dynamic> body,
       {required String fallbackEmail}) {
     final token = body['token'];
@@ -337,6 +355,25 @@ class AuthService {
     );
     _ensureSuccess(response,
         fallback: 'Не удалось сохранить подключение Home Assistant');
+  }
+
+  Future<(String token, DateTime expiresAt)> createHomeAssistantPairingSession({
+    required String hubId,
+    required String pairingProof,
+  }) async {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/api/home-assistant/pairing-sessions'),
+      headers: await _authHeaders(),
+      body: jsonEncode({'hubId': hubId, 'pairingProof': pairingProof}),
+    );
+    _ensureSuccess(response, fallback: 'Не удалось начать подключение хаба');
+    final body = _decodeMap(response.body);
+    final token = (body['token'] ?? '').toString();
+    final expiresAt = DateTime.tryParse((body['expiresAt'] ?? '').toString());
+    if (token.isEmpty || expiresAt == null) {
+      throw Exception('Backend вернул некорректную сессию подключения');
+    }
+    return (token, expiresAt);
   }
 
   Future<void> deleteHomeAssistantConnection() async {

@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uni_links/uni_links.dart';
+import 'dart:async';
 
+import 'features/auth/app_entry_point.dart';
+import 'models/session_models.dart';
+import 'services/auth_service.dart';
 import 'core/app_language.dart';
 import 'core/ui_tokens.dart';
-import 'features/auth/app_entry_point.dart';
 
 class SmartHouseApp extends StatefulWidget {
   const SmartHouseApp({super.key});
@@ -17,6 +21,8 @@ class SmartHouseApp extends StatefulWidget {
 class _SmartHouseAppState extends State<SmartHouseApp> {
   static const _languageKey = 'app_language';
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  final GlobalKey _appEntryKey = GlobalKey();
+  final ValueNotifier<AppSession?> _pendingExternalSession = ValueNotifier(null);
   AppLanguage _language = AppLanguage.ru;
   bool _bootstrapped = false;
 
@@ -26,6 +32,51 @@ class _SmartHouseAppState extends State<SmartHouseApp> {
   void initState() {
     super.initState();
     _loadPreferences();
+    _initDeepLinkListener();
+  }
+
+  StreamSubscription? _sub;
+
+  Future<void> _initDeepLinkListener() async {
+    // handle initial uri
+    try {
+      final initial = await getInitialUri();
+      if (initial != null) await _handleIncomingUri(initial);
+    } catch (_) {}
+    // listen for subsequent links
+    _sub = uriLinkStream.listen((uri) async {
+      if (uri != null) await _handleIncomingUri(uri);
+    }, onError: (_) {});
+  }
+
+  Future<void> _handleIncomingUri(Uri uri) async {
+    try {
+      // Web redirect handled elsewhere; here we care about native scheme smarthouse://
+      if ((uri.scheme == 'smarthouse' && uri.host == 'one-time-login') ||
+          (uri.path == '/one-time-login' && uri.queryParameters['token'] != null)) {
+        final token = uri.queryParameters['token'];
+        if (token == null || token.isEmpty) return;
+        final auth = AuthService();
+        final session = await auth.oneTimeLogin(token);
+        _pendingExternalSession.value = session;
+        // pass session to AppEntryPoint if available
+        final entryState = _appEntryKey.currentState;
+        try {
+          if (entryState != null) {
+            // call dynamically to avoid private state typing
+            (entryState as dynamic).acceptSessionFromExternal(session);
+            return;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    _pendingExternalSession.dispose();
+    super.dispose();
   }
 
   Future<void> _loadPreferences() async {
@@ -185,6 +236,8 @@ class _SmartHouseAppState extends State<SmartHouseApp> {
         GlobalCupertinoLocalizations.delegate,
       ],
       home: AppEntryPoint(
+        key: _appEntryKey,
+        externalSession: _pendingExternalSession,
         isDarkMode: _isDark,
         onToggleTheme: _toggleTheme,
         language: _language,

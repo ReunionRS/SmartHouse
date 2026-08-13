@@ -24,12 +24,16 @@ dependencies:
   # web 0.5.x dependency used by this project.
   file_picker: 8.0.7
   url_launcher: ^6.3.1
+  uni_links: ^0.5.1
   flutter_local_notifications: ^17.2.3
   package_info_plus: ^8.0.2
   google_fonts: ^6.2.1
   material_design_icons_flutter: 7.0.7296
   firebase_core: ^2.27.1
   firebase_messaging: ^14.7.21
+
+dependency_overrides:
+  flutter_plugin_android_lifecycle: ^2.0.31
 
 dev_dependencies:
   flutter_test:

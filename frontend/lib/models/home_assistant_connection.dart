@@ -4,6 +4,7 @@ class HomeAssistantConnection {
     required this.userId,
     required this.houseId,
     required this.baseUrl,
+    required this.clientId,
     required this.accessToken,
     required this.refreshToken,
     required this.expiresAt,
@@ -15,6 +16,7 @@ class HomeAssistantConnection {
   final String userId;
   final String houseId;
   final String baseUrl;
+  final String clientId;
   final String accessToken;
   final String refreshToken;
   final DateTime expiresAt;
@@ -29,6 +31,7 @@ class HomeAssistantConnection {
       'userId': userId,
       'houseId': houseId,
       'baseUrl': baseUrl,
+      'clientId': clientId,
       'expiresAt': expiresAt.toIso8601String(),
       'status': status,
       'lastCheckedAt': lastCheckedAt?.toIso8601String(),
@@ -45,6 +48,7 @@ class HomeAssistantConnection {
       userId: (json['userId'] ?? '').toString(),
       houseId: (json['houseId'] ?? '').toString(),
       baseUrl: (json['baseUrl'] ?? '').toString(),
+      clientId: (json['clientId'] ?? '').toString(),
       accessToken: accessToken,
       refreshToken: refreshToken,
       expiresAt: DateTime.tryParse((json['expiresAt'] ?? '').toString()) ??

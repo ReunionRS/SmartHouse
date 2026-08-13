@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smart_house
+      POSTGRES_USER: smart_house
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - smart-house-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smart_house -d smart_house"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      NODE_ENV: development
+      DATABASE_URL: postgresql://smart_house:${POSTGRES_PASSWORD}@postgres:5432/smart_house
+      JWT_SECRET: ${JWT_SECRET}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
+      HA_PAIRING_SECRET: ${HA_PAIRING_SECRET}
+      CORS_ORIGIN: http://localhost:5173
+      HA_WEB_APP_URL: http://localhost:5173
+    ports:
+      - "4000:4000"
+
+  smarthouse-ha:
+    build: ./ha
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      TZ: Europe/Moscow
+      SMART_HOUSE_BACKEND_URL: http://backend:4000
+      SMART_HOUSE_HUB_ID: ${SMART_HOUSE_HUB_ID:-smarthouse-dev-hub}
+      HA_PAIRING_SECRET: ${HA_PAIRING_SECRET}
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./ha/config:/config
+
+volumes:
+  smart-house-postgres:

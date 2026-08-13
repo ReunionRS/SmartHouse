@@ -24,7 +24,8 @@ class HomeAssistantAuthService {
       return redirectFromEnv;
     }
     if (kIsWeb) {
-      return '${ApiConfig.baseUrl}/ha-oauth-web-callback';
+      final origin = Uri.base.origin;
+      return '$origin/ha-oauth-web-callback';
     }
     return '$callbackScheme://$callbackHost$callbackPath';
   }
@@ -48,6 +49,8 @@ class HomeAssistantAuthService {
     if (trimmed.endsWith('/')) return trimmed.substring(0, trimmed.length - 1);
     return trimmed;
   }
+
+  String pairingClientIdFor(String baseUrl) => '${_normalizeBaseUrl(baseUrl)}/';
 
   String _randomState() {
     const chars =
@@ -176,6 +179,7 @@ class HomeAssistantAuthService {
   Future<HomeAssistantTokenPayload> exchangeCodeForToken({
     required String baseUrl,
     required String code,
+    String? clientIdOverride,
   }) async {
     final normalized = _normalizeBaseUrl(baseUrl);
     final response = await http.post(
@@ -184,7 +188,7 @@ class HomeAssistantAuthService {
       body: {
         'grant_type': 'authorization_code',
         'code': code,
-        'client_id': clientId,
+        'client_id': clientIdOverride ?? clientId,
       },
     ).timeout(const Duration(seconds: 15));
 
@@ -207,9 +211,125 @@ class HomeAssistantAuthService {
     );
   }
 
+  Future<HomeAssistantTokenPayload> loginWithCredentials({
+    required String baseUrl,
+    required String username,
+    required String password,
+  }) async {
+    final normalized = _normalizeBaseUrl(baseUrl);
+    final response = await http.post(
+      Uri.parse('$normalized/auth/token'),
+      headers: const {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: {
+        'grant_type': 'password',
+        'username': username,
+        'password': password,
+        'client_id': clientId,
+      },
+    ).timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      throw Exception('Не удалось войти в Home Assistant');
+    }
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final accessToken = (body['access_token'] ?? '').toString();
+    final refreshToken = (body['refresh_token'] ?? '').toString();
+    final expiresIn = (body['expires_in'] as num?)?.toInt() ?? 0;
+    if (accessToken.isEmpty || refreshToken.isEmpty || expiresIn <= 0) {
+      throw Exception('Не удалось войти в Home Assistant');
+    }
+
+    return HomeAssistantTokenPayload(
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+      expiresIn: expiresIn,
+    );
+  }
+
+  Future<HomeAssistantTokenPayload> exchangePairingToken({
+    required String baseUrl,
+    required String pairingToken,
+  }) async {
+    final normalized = _normalizeBaseUrl(baseUrl);
+    final pairingClientId = pairingClientIdFor(normalized);
+    const headers = {'Content-Type': 'application/json'};
+    final startResponse = await http
+        .post(
+          Uri.parse('$normalized/auth/login_flow'),
+          headers: headers,
+          body: jsonEncode({
+            'client_id': pairingClientId,
+            'handler': ['smart_house', null],
+            'redirect_uri': pairingClientId,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (startResponse.statusCode != 200) {
+      throw Exception('smart_house_pairing_unavailable');
+    }
+    final startBody = jsonDecode(startResponse.body);
+    if (startBody is! Map<String, dynamic> ||
+        startBody['type'] != 'form' ||
+        startBody['flow_id'] is! String) {
+      throw Exception('smart_house_pairing_unavailable');
+    }
+
+    final flowId = startBody['flow_id'] as String;
+    final finishResponse = await http
+        .post(
+          Uri.parse('$normalized/auth/login_flow/$flowId'),
+          headers: headers,
+          body: jsonEncode({
+            'client_id': pairingClientId,
+            'pairing_token': pairingToken,
+          }),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (finishResponse.statusCode != 200) {
+      throw Exception('Не удалось подтвердить подключение Smart House Hub');
+    }
+    final finishBody = jsonDecode(finishResponse.body);
+    if (finishBody is! Map<String, dynamic> ||
+        finishBody['type'] != 'create_entry' ||
+        finishBody['result'] is! String) {
+      throw Exception('Недействительная или истёкшая сессия подключения');
+    }
+    return exchangeCodeForToken(
+      baseUrl: normalized,
+      code: finishBody['result'] as String,
+      clientIdOverride: pairingClientId,
+    );
+  }
+
+  Future<(String hubId, String pairingProof)?> detectSmartHouseHub(
+    String baseUrl,
+  ) async {
+    final normalized = _normalizeBaseUrl(baseUrl);
+    try {
+      final response = await http
+          .get(Uri.parse('$normalized/api/smart_house/info'))
+          .timeout(const Duration(seconds: 4));
+      if (response.statusCode != 200) return null;
+      final body = jsonDecode(response.body);
+      if (body is! Map<String, dynamic> ||
+          body['product'] != 'Smart House Hub') {
+        return null;
+      }
+      final hubId = (body['hubId'] ?? '').toString().trim();
+      final pairingProof = (body['pairingProof'] ?? '').toString().trim();
+      return hubId.isEmpty || pairingProof.isEmpty
+          ? null
+          : (hubId, pairingProof);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<HomeAssistantTokenPayload> refreshAccessToken({
     required String baseUrl,
     required String refreshToken,
+    String? clientIdOverride,
   }) async {
     final normalized = _normalizeBaseUrl(baseUrl);
     final response = await http.post(
@@ -218,7 +338,7 @@ class HomeAssistantAuthService {
       body: {
         'grant_type': 'refresh_token',
         'refresh_token': refreshToken,
-        'client_id': clientId,
+        'client_id': clientIdOverride ?? clientId,
       },
     ).timeout(const Duration(seconds: 15));
 

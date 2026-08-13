@@ -8,7 +8,9 @@ class ApiConfig {
 
   static String get baseUrl {
     const fromEnv = String.fromEnvironment('API_BASE_URL', defaultValue: '');
+    const fromUrl = String.fromEnvironment('API_URL', defaultValue: '');
     if (fromEnv.isNotEmpty) return _normalized(fromEnv);
+    if (fromUrl.isNotEmpty) return _normalized(fromUrl);
 
     if (kReleaseMode) return _defaultBaseUrl;
 

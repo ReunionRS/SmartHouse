@@ -21,4 +21,11 @@ export const config = Object.freeze({
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean),
+  haPairingSecret:
+    process.env.HA_PAIRING_SECRET ||
+    (isProduction ? '' : 'smart-house-local-pairing-secret-change-me'),
 });
+
+if (!config.haPairingSecret) {
+  throw new Error('HA_PAIRING_SECRET is required in production');
+}

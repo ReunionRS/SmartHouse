@@ -76,3 +76,30 @@ CREATE TABLE IF NOT EXISTS push_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_push_tokens_user_id ON push_tokens(user_id);
+
+CREATE TABLE IF NOT EXISTS ha_pairing_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  hub_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ha_pairing_sessions_lookup
+  ON ha_pairing_sessions (hub_id, token_hash)
+  WHERE consumed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS ha_one_time_tokens (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ha_one_time_tokens_lookup
+  ON ha_one_time_tokens (token_hash)
+  WHERE consumed_at IS NULL;

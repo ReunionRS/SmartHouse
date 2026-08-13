@@ -14,12 +14,14 @@ import 'login_screen.dart';
 class AppEntryPoint extends StatefulWidget {
   const AppEntryPoint({
     super.key,
+    this.externalSession,
     required this.isDarkMode,
     required this.onToggleTheme,
     required this.language,
     required this.onLanguageChanged,
   });
 
+  final ValueNotifier<AppSession?>? externalSession;
   final bool isDarkMode;
   final VoidCallback onToggleTheme;
   final AppLanguage language;
@@ -43,6 +45,7 @@ class _AppEntryPointState extends State<AppEntryPoint> {
   void initState() {
     super.initState();
     _bootstrap();
+    _attachExternalSessionListener();
   }
 
   Future<void> _bootstrap() async {
@@ -68,6 +71,34 @@ class _AppEntryPointState extends State<AppEntryPoint> {
       _homeAssistantSkipped = skipped;
       _loading = false;
     });
+  }
+
+  void _attachExternalSessionListener() {
+    final notifier = widget.externalSession;
+    if (notifier == null) return;
+    notifier.addListener(_handleExternalSession);
+    final pendingSession = notifier.value;
+    if (pendingSession != null) {
+      notifier.value = null;
+      _acceptSession(pendingSession);
+    }
+  }
+
+  void _detachExternalSessionListener() {
+    widget.externalSession?.removeListener(_handleExternalSession);
+  }
+
+  void _handleExternalSession() {
+    final session = widget.externalSession?.value;
+    if (session == null) return;
+    widget.externalSession?.value = null;
+    _acceptSession(session);
+  }
+
+  @override
+  void dispose() {
+    _detachExternalSessionListener();
+    super.dispose();
   }
 
   Future<void> _logout() async {
@@ -100,6 +131,11 @@ class _AppEntryPointState extends State<AppEntryPoint> {
     });
   }
 
+  // Called from external deeplink handlers to accept a freshly obtained session
+  Future<void> acceptSessionFromExternal(AppSession session) async {
+    await _acceptSession(session);
+  }
+
   Future<void> _skipHomeAssistant() async {
     final session = _session;
     if (session == null) return;
@@ -115,6 +151,15 @@ class _AppEntryPointState extends State<AppEntryPoint> {
       await prefs.remove('$_haSkipKeyPrefix${session.id}');
     }
     if (mounted) setState(() => _homeAssistantConnected = true);
+  }
+
+  @override
+  void didUpdateWidget(covariant AppEntryPoint oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.externalSession != widget.externalSession) {
+      oldWidget.externalSession?.removeListener(_handleExternalSession);
+      _attachExternalSessionListener();
+    }
   }
 
   @override
