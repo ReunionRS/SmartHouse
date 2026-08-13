@@ -282,7 +282,8 @@ class HomeAssistantAuthService {
           headers: headers,
           body: jsonEncode({
             'client_id': pairingClientId,
-            'pairing_token': pairingToken,
+            'email': '__smart_house_pairing__',
+            'password': pairingToken,
           }),
         )
         .timeout(const Duration(seconds: 15));

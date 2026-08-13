@@ -1,9 +1,10 @@
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:uni_links/uni_links.dart';
-import 'dart:async';
 
 import 'features/auth/app_entry_point.dart';
 import 'models/session_models.dart';
@@ -22,7 +23,9 @@ class _SmartHouseAppState extends State<SmartHouseApp> {
   static const _languageKey = 'app_language';
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey _appEntryKey = GlobalKey();
-  final ValueNotifier<AppSession?> _pendingExternalSession = ValueNotifier(null);
+  final ValueNotifier<AppSession?> _pendingExternalSession =
+      ValueNotifier(null);
+  final AppLinks _appLinks = AppLinks();
   AppLanguage _language = AppLanguage.ru;
   bool _bootstrapped = false;
 
@@ -40,12 +43,12 @@ class _SmartHouseAppState extends State<SmartHouseApp> {
   Future<void> _initDeepLinkListener() async {
     // handle initial uri
     try {
-      final initial = await getInitialUri();
+      final initial = await _appLinks.getInitialLink();
       if (initial != null) await _handleIncomingUri(initial);
     } catch (_) {}
     // listen for subsequent links
-    _sub = uriLinkStream.listen((uri) async {
-      if (uri != null) await _handleIncomingUri(uri);
+    _sub = _appLinks.uriLinkStream.listen((uri) async {
+      await _handleIncomingUri(uri);
     }, onError: (_) {});
   }
 
@@ -53,7 +56,8 @@ class _SmartHouseAppState extends State<SmartHouseApp> {
     try {
       // Web redirect handled elsewhere; here we care about native scheme smarthouse://
       if ((uri.scheme == 'smarthouse' && uri.host == 'one-time-login') ||
-          (uri.path == '/one-time-login' && uri.queryParameters['token'] != null)) {
+          (uri.path == '/one-time-login' &&
+              uri.queryParameters['token'] != null)) {
         final token = uri.queryParameters['token'];
         if (token == null || token.isEmpty) return;
         final auth = AuthService();
@@ -139,6 +143,15 @@ class _SmartHouseAppState extends State<SmartHouseApp> {
     ));
     return ThemeData(
       useMaterial3: true,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+        },
+      ),
       colorScheme: scheme.copyWith(
         primary: primary,
         secondary: primary,

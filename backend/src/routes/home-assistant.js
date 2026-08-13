@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import bcrypt from 'bcryptjs';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'crypto';
 import { config } from '../config.js';
 import { pool } from '../db.js';
@@ -114,6 +115,28 @@ router.post('/pairing-sessions/consume', asyncRoute(async (req, res) => {
   } finally {
     client.release();
   }
+}));
+
+router.post('/local-login', asyncRoute(async (req, res) => {
+  if (!hasValidPairingSecret(req.get('x-smart-house-pairing-secret'))) {
+    return res.status(401).json({ error: 'Недействительный ключ хаба' });
+  }
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
+  const { rows } = await pool.query(
+    'SELECT id, email, fio, password_hash FROM users WHERE email = $1 LIMIT 1',
+    [email],
+  );
+  if (!rows.length || !(await bcrypt.compare(password, rows[0].password_hash))) {
+    return res.status(401).json({ error: 'Неверный email или пароль' });
+  }
+  return res.json({
+    user: {
+      id: rows[0].id,
+      email: rows[0].email,
+      name: rows[0].fio || rows[0].email,
+    },
+  });
 }));
 
 router.use(authRequired);

@@ -13,6 +13,14 @@ class HomeAssistantDiscoveryService {
     final instances = <HomeAssistantInstance>[];
     final seen = <String>{};
 
+    // The Android emulator reaches services running on the Windows host through
+    // 10.0.2.2. Probe it before waiting for mDNS, so the local development hub
+    // appears immediately.
+    if (Platform.isAndroid) {
+      final emulatorHost = await _probeHomeAssistant('http://10.0.2.2:8123');
+      if (emulatorHost != null) return [emulatorHost];
+    }
+
     try {
       await client.start();
 
@@ -76,9 +84,6 @@ class HomeAssistantDiscoveryService {
         'http://localhost:8123',
         'http://127.0.0.1:8123',
       };
-      if (Platform.isAndroid) {
-        fallbackUrls.add('http://10.0.2.2:8123');
-      }
       if (Platform.isIOS) {
         fallbackUrls.add('http://host.docker.internal:8123');
       }
@@ -87,7 +92,8 @@ class HomeAssistantDiscoveryService {
       }
       for (final baseUrl in fallbackUrls) {
         final instance = await _probeHomeAssistant(baseUrl);
-        if (instance != null && !instances.any((item) => item.baseUrl == instance.baseUrl)) {
+        if (instance != null &&
+            !instances.any((item) => item.baseUrl == instance.baseUrl)) {
           instances.add(instance);
         }
       }
@@ -102,7 +108,8 @@ class HomeAssistantDiscoveryService {
       final response = await http.get(uri).timeout(const Duration(seconds: 4));
       if (response.statusCode != 200) return null;
       final body = jsonDecode(response.body);
-      if (body is! Map<String, dynamic> || body['product'] != 'Smart House Hub') {
+      if (body is! Map<String, dynamic> ||
+          body['product'] != 'Smart House Hub') {
         return null;
       }
       final parsed = Uri.parse(baseUrl);

@@ -42,7 +42,7 @@ class _ProfilePageState extends State<ProfilePage> {
   void _openMyProfile() {
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => _MyProfilePage(
+        builder: (_) => MyProfilePage(
           session: widget.session,
           auth: widget.auth,
           onNameChanged: widget.onNameChanged,
@@ -172,21 +172,24 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 }
 
-class _MyProfilePage extends StatefulWidget {
-  const _MyProfilePage({
+class MyProfilePage extends StatefulWidget {
+  const MyProfilePage({
+    super.key,
     required this.session,
     required this.auth,
     this.onNameChanged,
+    this.onFinished,
   });
   final AppSession session;
   final AuthService auth;
   final ValueChanged<String>? onNameChanged;
+  final VoidCallback? onFinished;
 
   @override
-  State<_MyProfilePage> createState() => _MyProfilePageState();
+  State<MyProfilePage> createState() => _MyProfilePageState();
 }
 
-class _MyProfilePageState extends State<_MyProfilePage> {
+class _MyProfilePageState extends State<MyProfilePage> {
   Uint8List? avatarBytes;
   late String avatarUrl = widget.session.avatarUrl;
   late String name = widget.session.fio.trim().isEmpty
@@ -264,7 +267,9 @@ class _MyProfilePageState extends State<_MyProfilePage> {
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
-        title: const Text('Мой профиль'),
+        automaticallyImplyLeading: widget.onFinished == null,
+        title: Text(
+            widget.onFinished == null ? 'Мой профиль' : 'Настройка профиля'),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
@@ -328,6 +333,19 @@ class _MyProfilePageState extends State<_MyProfilePage> {
             textAlign: TextAlign.center,
             style: TextStyle(color: Color(0xFFA99D93), fontSize: 11),
           ),
+          if (widget.onFinished != null) ...[
+            const SizedBox(height: 28),
+            FilledButton(
+              onPressed: picking ? null : widget.onFinished,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(54),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+              ),
+              child: const Text('Продолжить'),
+            ),
+          ],
         ],
       ),
     );

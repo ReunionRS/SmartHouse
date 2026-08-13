@@ -15,7 +15,7 @@ Route<T> slideUpRoute<T>(Widget page) => PageRouteBuilder<T>(
             begin: const Offset(0, 1),
             end: Offset.zero,
           ).animate(curved),
-          child: FadeTransition(opacity: curved, child: child),
+          child: child,
         );
       },
     );

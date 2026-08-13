@@ -43,6 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/app/.cxx/
 
 # Firebase Admin SDK private keys must stay local/server-side only.
 /android/app/src/main/*firebase-adminsdk*.json

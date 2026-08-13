@@ -53,6 +53,7 @@ class SmartHomeShell extends StatefulWidget {
 
 class _SmartHomeShellState extends State<SmartHomeShell> {
   int index = 0;
+  int tabSlideDirection = 1;
   late String userFio = widget.session.fio;
   String? error;
   List<HomeAssistantRoom> rooms = const [];
@@ -273,14 +274,36 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
             ),
           ),
         ),
-        AnimatedSwitcher(
-            duration: const Duration(milliseconds: 280),
-            switchInCurve: Curves.easeOutCubic,
-            child: KeyedSubtree(key: ValueKey(index), child: pages[index])),
+        ClipRect(
+          child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 360),
+              switchInCurve: Curves.easeInOutCubic,
+              switchOutCurve: Curves.easeInOutCubic,
+              transitionBuilder: (child, animation) {
+                final childIndex = (child.key as ValueKey<int>).value;
+                final isIncoming = childIndex == index;
+                return SlideTransition(
+                  position: Tween<Offset>(
+                    begin: Offset(
+                      isIncoming
+                          ? tabSlideDirection.toDouble()
+                          : -tabSlideDirection.toDouble(),
+                      0,
+                    ),
+                    end: Offset.zero,
+                  ).animate(animation),
+                  child: child,
+                );
+              },
+              child: KeyedSubtree(key: ValueKey(index), child: pages[index])),
+        ),
       ]),
       bottomNavigationBar: _GlassDock(
         index: index,
-        onChanged: (value) => setState(() => index = value),
+        onChanged: (value) => setState(() {
+          tabSlideDirection = value > index ? 1 : -1;
+          index = value;
+        }),
         onAdd: openCreateRoom,
       ),
     );

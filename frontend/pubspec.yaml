@@ -18,13 +18,13 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   # 4.1.0 uses AuthenticationServices APIs available only in newer Xcode.
   # 3.1.x keeps the same Dart API and supports Xcode 14.2 on macOS Monterey.
-  flutter_web_auth_2: ^3.1.2
+  flutter_web_auth_2: ^4.1.0
   multicast_dns: ^0.3.2+7
   # 8.0.7 fixes plugin metadata while remaining compatible with Firebase's
   # web 0.5.x dependency used by this project.
   file_picker: 8.0.7
   url_launcher: ^6.3.1
-  uni_links: ^0.5.1
+  app_links: ^6.4.0
   flutter_local_notifications: ^17.2.3
   package_info_plus: ^8.0.2
   google_fonts: ^6.2.1
@@ -43,6 +43,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - Logo.png
     - assets/images/smart_home_interior.jpg
     - assets/images/room_living.jpg
     - assets/images/room_kitchen.jpg

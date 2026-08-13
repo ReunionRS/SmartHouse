@@ -7,6 +7,7 @@ import '../../services/auth_service.dart';
 import '../../services/home_assistant_connection_service.dart';
 import '../../services/push_service.dart';
 import '../../smart_home/smart_home_shell.dart';
+import '../settings/profile_page.dart';
 import 'first_run_experience.dart';
 import 'home_assistant_onboarding_screen.dart';
 import 'login_screen.dart';
@@ -33,12 +34,14 @@ class AppEntryPoint extends StatefulWidget {
 
 class _AppEntryPointState extends State<AppEntryPoint> {
   static const _haSkipKeyPrefix = 'home_assistant_setup_skipped_';
+  static const _profileSetupPendingKeyPrefix = 'profile_setup_pending_';
   final _auth = AuthService();
   final _connections = HomeAssistantConnectionService();
   bool _loading = true;
   bool _firstRunCompleted = false;
   bool _homeAssistantConnected = false;
   bool _homeAssistantSkipped = false;
+  bool _profileSetupRequired = false;
   AppSession? _session;
 
   @override
@@ -57,11 +60,14 @@ class _AppEntryPointState extends State<AppEntryPoint> {
     final firstRunCompleted = results[1] as bool;
     var connected = false;
     var skipped = false;
+    var profileSetupRequired = false;
     if (session != null) {
       await PushService.instance.registerToken(session);
       connected = await _connections.isConnected(session.id);
       final prefs = await SharedPreferences.getInstance();
       skipped = prefs.getBool('$_haSkipKeyPrefix${session.id}') ?? false;
+      profileSetupRequired =
+          prefs.getBool('$_profileSetupPendingKeyPrefix${session.id}') ?? false;
     }
     if (!mounted) return;
     setState(() {
@@ -69,6 +75,7 @@ class _AppEntryPointState extends State<AppEntryPoint> {
       _firstRunCompleted = firstRunCompleted;
       _homeAssistantConnected = connected;
       _homeAssistantSkipped = skipped;
+      _profileSetupRequired = profileSetupRequired;
       _loading = false;
     });
   }
@@ -115,6 +122,7 @@ class _AppEntryPointState extends State<AppEntryPoint> {
       _session = null;
       _homeAssistantConnected = false;
       _homeAssistantSkipped = false;
+      _profileSetupRequired = false;
     });
   }
 
@@ -123,11 +131,14 @@ class _AppEntryPointState extends State<AppEntryPoint> {
     final connected = await _connections.isConnected(session.id);
     final prefs = await SharedPreferences.getInstance();
     final skipped = prefs.getBool('$_haSkipKeyPrefix${session.id}') ?? false;
+    final profileSetupRequired =
+        prefs.getBool('$_profileSetupPendingKeyPrefix${session.id}') ?? false;
     if (!mounted) return;
     setState(() {
       _session = session;
       _homeAssistantConnected = connected;
       _homeAssistantSkipped = skipped;
+      _profileSetupRequired = profileSetupRequired;
     });
   }
 
@@ -149,8 +160,27 @@ class _AppEntryPointState extends State<AppEntryPoint> {
     if (session != null) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('$_haSkipKeyPrefix${session.id}');
+      await prefs.setBool('$_profileSetupPendingKeyPrefix${session.id}', true);
     }
-    if (mounted) setState(() => _homeAssistantConnected = true);
+    if (mounted) {
+      setState(() {
+        _homeAssistantConnected = true;
+        _profileSetupRequired = true;
+      });
+    }
+  }
+
+  Future<void> _completeProfileSetup() async {
+    final current = _session;
+    if (current == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_profileSetupPendingKeyPrefix${current.id}');
+    final refreshedSession = await _auth.getSession();
+    if (!mounted) return;
+    setState(() {
+      _session = refreshedSession ?? current;
+      _profileSetupRequired = false;
+    });
   }
 
   @override
@@ -188,6 +218,13 @@ class _AppEntryPointState extends State<AppEntryPoint> {
         onSkip: _skipHomeAssistant,
         onBackToLogin: _logout,
       );
+    } else if (_profileSetupRequired) {
+      child = MyProfilePage(
+        key: const ValueKey('profile_setup'),
+        session: _session!,
+        auth: _auth,
+        onFinished: _completeProfileSetup,
+      );
     } else {
       child = SmartHomeShell(
         key: const ValueKey('home_screen'),
@@ -201,28 +238,24 @@ class _AppEntryPointState extends State<AppEntryPoint> {
       );
     }
 
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 280),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, animation) {
-        final slide = Tween<Offset>(
-          begin: const Offset(0.035, 0),
-          end: Offset.zero,
-        ).animate(animation);
-        final fade = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-        );
-        return FadeTransition(
-          opacity: fade,
-          child: SlideTransition(
-            position: slide,
+    final childKey = child.key;
+    return ClipRect(
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 360),
+        switchInCurve: Curves.easeInOutCubic,
+        switchOutCurve: Curves.easeInOutCubic,
+        transitionBuilder: (child, animation) {
+          final isIncoming = child.key == childKey;
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: Offset(isIncoming ? 1 : -1, 0),
+              end: Offset.zero,
+            ).animate(animation),
             child: child,
-          ),
-        );
-      },
-      child: child,
+          );
+        },
+        child: child,
+      ),
     );
   }
 }

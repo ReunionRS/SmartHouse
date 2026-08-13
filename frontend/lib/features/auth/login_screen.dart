@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../models/session_models.dart';
 import '../../services/auth_service.dart';
@@ -25,6 +26,8 @@ class _LoginScreenState extends State<LoginScreen> {
   final formKey = GlobalKey<FormState>();
   final email = TextEditingController();
   final password = TextEditingController();
+  final emailFocus = FocusNode();
+  final passwordFocus = FocusNode();
   bool remember = true;
   bool submitting = false;
   bool obscure = true;
@@ -49,6 +52,8 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     email.dispose();
     password.dispose();
+    emailFocus.dispose();
+    passwordFocus.dispose();
     super.dispose();
   }
 
@@ -196,10 +201,12 @@ class _LoginScreenState extends State<LoginScreen> {
             children: [
               _field(
                 controller: email,
+                focusNode: emailFocus,
                 label: 'Email',
                 icon: Icons.mail_outline_rounded,
                 keyboardType: TextInputType.emailAddress,
                 action: TextInputAction.next,
+                onSubmitted: (_) => passwordFocus.requestFocus(),
                 validator: (value) => value?.contains('@') == true
                     ? null
                     : 'Введите корректный email',
@@ -207,6 +214,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 10),
               _field(
                 controller: password,
+                focusNode: passwordFocus,
                 label: 'Пароль',
                 icon: Icons.lock_outline_rounded,
                 obscureText: obscure,
@@ -258,6 +266,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Widget _field({
     required TextEditingController controller,
+    required FocusNode focusNode,
     required String label,
     required IconData icon,
     required String? Function(String?) validator,
@@ -269,11 +278,19 @@ class _LoginScreenState extends State<LoginScreen> {
   }) =>
       TextFormField(
         controller: controller,
+        focusNode: focusNode,
         style: const TextStyle(color: Colors.white, fontSize: 16),
         keyboardType: keyboardType,
         textInputAction: action,
         obscureText: obscureText,
         onFieldSubmitted: onSubmitted,
+        onTap: () async {
+          focusNode.requestFocus();
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          if (focusNode.hasFocus) {
+            await SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+          }
+        },
         validator: validator,
         autovalidateMode: AutovalidateMode.onUserInteraction,
         decoration: InputDecoration(

@@ -86,6 +86,38 @@ class SmartHouseAuthProvider(AuthProvider):
             "name": str(user.get("name") or user.get("email") or "Smart House"),
         }
 
+    async def async_validate_local_login(
+        self, email: str, password: str
+    ) -> dict[str, str]:
+        """Validate against the single account database on this local hub."""
+        backend_url = self.config["backend_url"].rstrip("/")
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.post(
+                f"{backend_url}/api/home-assistant/local-login",
+                headers={
+                    "x-smart-house-pairing-secret": self.config["pairing_secret"]
+                },
+                json={"email": email, "password": password},
+                timeout=10,
+            ) as response:
+                payload: Any = await response.json(content_type=None)
+                if response.status != 200 or not isinstance(payload, dict):
+                    raise InvalidPairingToken
+        except InvalidPairingToken:
+            raise
+        except Exception as error:
+            _LOGGER.warning("Local Smart House account service is unavailable: %s", error)
+            raise InvalidPairingToken from error
+        user = payload.get("user")
+        if not isinstance(user, dict) or not user.get("id"):
+            raise InvalidPairingToken
+        return {
+            "smart_house_user_id": str(user["id"]),
+            "email": str(user.get("email") or ""),
+            "name": str(user.get("name") or user.get("email") or "Smart House"),
+        }
+
     @override
     async def async_get_or_create_credentials(
         self, flow_result: Mapping[str, str]
@@ -94,12 +126,21 @@ class SmartHouseAuthProvider(AuthProvider):
         smart_house_user_id = flow_result["smart_house_user_id"]
         for credential in await self.async_credentials():
             if credential.data.get("smart_house_user_id") == smart_house_user_id:
+                self.hass.auth.async_update_user_credentials_data(
+                    credential,
+                    {
+                        **credential.data,
+                        "email": flow_result.get("email", ""),
+                        "name": flow_result.get("name", ""),
+                    },
+                )
                 return credential
 
         credentials = self.async_create_credentials(
             {
                 "smart_house_user_id": smart_house_user_id,
                 "email": flow_result.get("email", ""),
+                "name": flow_result.get("name", ""),
             }
         )
         user = await self.hass.auth.async_create_user(
@@ -154,9 +195,17 @@ class SmartHouseLoginFlow(LoginFlow[SmartHouseAuthProvider]):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                identity = await self._auth_provider.async_consume_pairing_token(
-                    user_input["pairing_token"]
-                )
+                email = str(user_input.get("email") or "")
+                password = str(user_input.get("password") or "")
+                if email == "__smart_house_pairing__":
+                    identity = await self._auth_provider.async_consume_pairing_token(
+                        password
+                    )
+                else:
+                    identity = await self._auth_provider.async_validate_local_login(
+                        email,
+                        password,
+                    )
             except InvalidPairingToken:
                 errors["base"] = "invalid_auth"
             else:
@@ -164,6 +213,11 @@ class SmartHouseLoginFlow(LoginFlow[SmartHouseAuthProvider]):
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({vol.Required("pairing_token"): str}),
+            data_schema=vol.Schema(
+                {
+                    vol.Required("email"): str,
+                    vol.Required("password"): str,
+                }
+            ),
             errors=errors,
         )

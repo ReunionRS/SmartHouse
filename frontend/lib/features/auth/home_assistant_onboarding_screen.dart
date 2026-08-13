@@ -44,6 +44,8 @@ class _HomeAssistantOnboardingScreenState
   final api = AuthService();
   late final AnimationController animation;
   _Step step = _Step.discover;
+  _Step renderedStep = _Step.discover;
+  int slideDirection = 1;
   List<HomeAssistantInstance> servers = const [];
   String? selected;
   String? error;
@@ -118,6 +120,7 @@ class _HomeAssistantOnboardingScreenState
       setState(() {
         servers = result;
         selected = result.isEmpty ? null : result.first.baseUrl;
+        if (result.isNotEmpty) step = _Step.servers;
       });
     } catch (_) {
       if (mounted) setState(() => error = 'Не удалось выполнить автопоиск');
@@ -169,9 +172,26 @@ class _HomeAssistantOnboardingScreenState
       error = null;
     });
     try {
-      final connectionClientId = oauth.clientId;
-      final (code, _) = await oauth.handleCallback(baseUrl: url);
-      final token = await oauth.exchangeCodeForToken(baseUrl: url, code: code);
+      final hub = await oauth.detectSmartHouseHub(url);
+      late final HomeAssistantTokenPayload token;
+      late final String connectionClientId;
+
+      if (hub != null) {
+        final (hubId, pairingProof) = hub;
+        final (pairingToken, _) = await api.createHomeAssistantPairingSession(
+          hubId: hubId,
+          pairingProof: pairingProof,
+        );
+        token = await oauth.exchangePairingToken(
+          baseUrl: url,
+          pairingToken: pairingToken,
+        );
+        connectionClientId = oauth.pairingClientIdFor(url);
+      } else {
+        connectionClientId = oauth.clientId;
+        final (code, _) = await oauth.handleCallback(baseUrl: url);
+        token = await oauth.exchangeCodeForToken(baseUrl: url, code: code);
+      }
       final connection = HomeAssistantConnection(
         id: '${widget.session.id}_${DateTime.now().millisecondsSinceEpoch}',
         userId: widget.session.id,
@@ -206,25 +226,52 @@ class _HomeAssistantOnboardingScreenState
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        backgroundColor: const Color(0xFF0C0907),
-        body: Stack(children: [
-          const Positioned(top: -140, right: -100, child: _Glow()),
-          SafeArea(
-              child: AnimatedSwitcher(
-                  duration: Duration(
-                      milliseconds:
-                          MediaQuery.disableAnimationsOf(context) ? 1 : 300),
-                  switchInCurve: Curves.easeOutCubic,
-                  child: switch (step) {
-                    _Step.discover => discoverView(),
-                    _Step.servers => serversView(),
-                    _Step.authorize => authorizeView(),
-                    _Step.connecting => connectingView(),
-                    _Step.success => successView(),
-                  })),
-        ]),
-      );
+  Widget build(BuildContext context) {
+    if (step != renderedStep) {
+      slideDirection = step.index > renderedStep.index ? 1 : -1;
+      renderedStep = step;
+    }
+    final currentChild = switch (step) {
+      _Step.discover => discoverView(),
+      _Step.servers => serversView(),
+      _Step.authorize => authorizeView(),
+      _Step.connecting => connectingView(),
+      _Step.success => successView(),
+    };
+    final currentKey = currentChild.key;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF0C0907),
+      body: Stack(children: [
+        const Positioned(top: -140, right: -100, child: _Glow()),
+        SafeArea(
+            child: ClipRect(
+          child: AnimatedSwitcher(
+              duration: Duration(
+                  milliseconds:
+                      MediaQuery.disableAnimationsOf(context) ? 1 : 360),
+              switchInCurve: Curves.easeInOutCubic,
+              switchOutCurve: Curves.easeInOutCubic,
+              transitionBuilder: (child, animation) {
+                final isIncoming = child.key == currentKey;
+                return SlideTransition(
+                  position: Tween<Offset>(
+                    begin: Offset(
+                      isIncoming
+                          ? slideDirection.toDouble()
+                          : -slideDirection.toDouble(),
+                      0,
+                    ),
+                    end: Offset.zero,
+                  ).animate(animation),
+                  child: child,
+                );
+              },
+              child: currentChild),
+        )),
+      ]),
+    );
+  }
 
   Widget topBar({VoidCallback? back}) => Row(children: [
         if (back != null)
@@ -256,7 +303,7 @@ class _HomeAssistantOnboardingScreenState
                   height: 270,
                   child: CustomPaint(
                       painter: _RadarPainter(animation.value, servers.length),
-                      child: const Center(child: _HomeMark())))),
+                      child: const Center(child: _AppLogoMark())))),
           const Spacer(),
           Text(error ?? 'Поиск устройств…',
               style: TextStyle(
@@ -415,8 +462,8 @@ class _RadarPainter extends CustomPainter {
       old.value != value || old.points != points;
 }
 
-class _HomeMark extends StatelessWidget {
-  const _HomeMark();
+class _AppLogoMark extends StatelessWidget {
+  const _AppLogoMark();
   @override
   Widget build(BuildContext context) => Container(
       width: 72,
@@ -427,8 +474,8 @@ class _HomeMark extends StatelessWidget {
           boxShadow: [
             BoxShadow(color: _orange.withValues(alpha: .35), blurRadius: 36)
           ]),
-      child:
-          const Icon(Icons.home_rounded, color: Color(0xFF351405), size: 38));
+      padding: const EdgeInsets.all(10),
+      child: Image.asset('Logo.png', fit: BoxFit.contain));
 }
 
 class _HaMark extends StatelessWidget {
