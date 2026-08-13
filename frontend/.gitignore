@@ -46,3 +46,6 @@ app.*.map.json
 
 # Firebase Admin SDK private keys must stay local/server-side only.
 /android/app/src/main/*firebase-adminsdk*.json
+
+# FVM Version Cache
+.fvm/
