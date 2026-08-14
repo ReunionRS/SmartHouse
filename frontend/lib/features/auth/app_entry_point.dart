@@ -174,6 +174,23 @@ class _AppEntryPointState extends State<AppEntryPoint> {
     }
   }
 
+  Future<void> _reconnectHomeAssistant() async {
+    final current = _session;
+    if (current == null) return;
+    try {
+      await _auth.deleteHomeAssistantConnection();
+    } catch (_) {}
+    await _connections.disconnect(current.id);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_haSkipKeyPrefix${current.id}');
+    if (!mounted) return;
+    setState(() {
+      _homeAssistantConnected = false;
+      _homeAssistantSkipped = false;
+      _profileSetupRequired = false;
+    });
+  }
+
   Future<void> _completeProfileSetup() async {
     final current = _session;
     if (current == null) return;
@@ -235,6 +252,7 @@ class _AppEntryPointState extends State<AppEntryPoint> {
         auth: _auth,
         session: _session!,
         onLogout: _logout,
+        onReconnectHub: _reconnectHomeAssistant,
         isDarkMode: widget.isDarkMode,
         onToggleTheme: widget.onToggleTheme,
         themeMode: widget.themeMode,

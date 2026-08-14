@@ -355,9 +355,12 @@ class RoomService {
             message = decoded['error'].toString();
           }
         } catch (_) {}
-        if (response.statusCode == 401 || response.statusCode == 502) {
+        if (response.statusCode == 401 || response.statusCode == 403) {
           message =
               'Авторизация Smart House Hub устарела. Переподключите хаб в настройках.';
+        } else if (response.statusCode == 502) {
+          message =
+              'Smart House Hub сейчас недоступен. Проверьте питание хаба и подключение к локальной сети.';
         }
         throw Exception(message);
       }

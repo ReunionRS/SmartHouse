@@ -24,6 +24,7 @@ class ProfilePage extends StatefulWidget {
     required this.language,
     required this.onLanguageChanged,
     required this.onLogout,
+    required this.onReconnectHub,
     this.onNameChanged,
   });
 
@@ -36,6 +37,7 @@ class ProfilePage extends StatefulWidget {
   final AppLanguage language;
   final Future<void> Function(AppLanguage language) onLanguageChanged;
   final Future<void> Function() onLogout;
+  final Future<void> Function() onReconnectHub;
   final ValueChanged<String>? onNameChanged;
 
   @override
@@ -162,6 +164,48 @@ class _ProfilePageState extends State<ProfilePage> {
             icon: Icons.shield_outlined,
             title: I18n.t('Безопасность', 'Утинлык', 'Security'),
             onTap: _openSecurity,
+          ),
+          const SizedBox(height: 10),
+          _ProfileTile(
+            icon: Icons.hub_outlined,
+            title: I18n.t(
+              'Подключение Smart House Hub',
+              'Smart House Hub подключение',
+              'Smart House Hub connection',
+            ),
+            trailing: I18n.t('Переподключить', 'Переподключить', 'Reconnect'),
+            onTap: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (dialogContext) => AlertDialog(
+                  title: Text(I18n.t(
+                    'Переподключить хаб?',
+                    'Хабез выльысь подключить?',
+                    'Reconnect the hub?',
+                  )),
+                  content: Text(I18n.t(
+                    'Текущее подключение будет удалено, после чего откроется поиск Smart House Hub.',
+                    'Тырмыт подключение быдтэм луоз, собере Smart House Hub утчан усьтӥськоз.',
+                    'The current connection will be removed and Smart House Hub discovery will open.',
+                  )),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext, false),
+                      child: Text(I18n.t('Отмена', 'Кошкыны', 'Cancel')),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(dialogContext, true),
+                      child: Text(I18n.t(
+                        'Переподключить',
+                        'Выль подключить',
+                        'Reconnect',
+                      )),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed == true) await widget.onReconnectHub();
+            },
           ),
           const SizedBox(height: 24),
           InkWell(

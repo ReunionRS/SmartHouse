@@ -38,6 +38,7 @@ class SmartHomeShell extends StatefulWidget {
     required this.auth,
     required this.session,
     required this.onLogout,
+    required this.onReconnectHub,
     required this.isDarkMode,
     required this.onToggleTheme,
     required this.themeMode,
@@ -48,6 +49,7 @@ class SmartHomeShell extends StatefulWidget {
   final AuthService auth;
   final AppSession session;
   final Future<void> Function() onLogout;
+  final Future<void> Function() onReconnectHub;
   final bool isDarkMode;
   final VoidCallback onToggleTheme;
   final ThemeMode themeMode;
@@ -133,6 +135,7 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _CreateRoomSheet(
+        onReconnectHub: widget.onReconnectHub,
         onCreate: (name, icon, roomType) => roomService.create(
           userId: widget.session.id,
           name: name,
@@ -295,6 +298,7 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
         language: widget.language,
         onLanguageChanged: widget.onLanguageChanged,
         onLogout: widget.onLogout,
+        onReconnectHub: widget.onReconnectHub,
         onNameChanged: (value) => setState(() => userFio = value),
       ),
     ];
@@ -1067,9 +1071,13 @@ class _RoomCard extends StatelessWidget {
 }
 
 class _CreateRoomSheet extends StatefulWidget {
-  const _CreateRoomSheet({required this.onCreate});
+  const _CreateRoomSheet({
+    required this.onCreate,
+    required this.onReconnectHub,
+  });
   final Future<HomeAssistantRoom> Function(
       String name, String icon, String roomType) onCreate;
+  final Future<void> Function() onReconnectHub;
 
   @override
   State<_CreateRoomSheet> createState() => _CreateRoomSheetState();
@@ -1295,8 +1303,51 @@ class _CreateRoomSheetState extends State<_CreateRoomSheet> {
           ),
           if (error != null) ...[
             const SizedBox(height: 12),
-            Text(error!,
-                style: const TextStyle(color: Color(0xFFFF8B8B), fontSize: 12)),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFE9E7),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFFF8B7E)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.error_outline_rounded,
+                          color: Color(0xFFB42318), size: 20),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Text(
+                          error!,
+                          style: const TextStyle(
+                            color: Color(0xFF7A271A),
+                            fontSize: 13,
+                            height: 1.35,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      Navigator.of(context).pop();
+                      await widget.onReconnectHub();
+                    },
+                    icon: const Icon(Icons.sync_rounded),
+                    label: Text(I18n.t(
+                      'Переподключить хаб',
+                      'Хабез выль подключить',
+                      'Reconnect hub',
+                    )),
+                  ),
+                ],
+              ),
+            ),
           ],
           const SizedBox(height: 20),
           FilledButton(
