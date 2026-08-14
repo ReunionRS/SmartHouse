@@ -103,3 +103,61 @@ CREATE TABLE IF NOT EXISTS ha_one_time_tokens (
 CREATE INDEX IF NOT EXISTS idx_ha_one_time_tokens_lookup
   ON ha_one_time_tokens (token_hash)
   WHERE consumed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS ai_conversations (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  home_id TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_app_state (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  state_key TEXT NOT NULL,
+  value JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, state_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_conversations_user_updated
+  ON ai_conversations (user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content TEXT NOT NULL,
+  response_type TEXT NOT NULL DEFAULT 'text',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_messages_conversation_created
+  ON ai_messages (conversation_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_audit_log (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  home_id TEXT NOT NULL DEFAULT '',
+  conversation_id TEXT,
+  tool TEXT NOT NULL,
+  target TEXT NOT NULL DEFAULT '',
+  result TEXT NOT NULL,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS ai_action_confirmations (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id TEXT,
+  tool TEXT NOT NULL,
+  arguments JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'cancelled', 'expired', 'failed')),
+  expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_confirmations_user_status
+  ON ai_action_confirmations (user_id, status, expires_at);

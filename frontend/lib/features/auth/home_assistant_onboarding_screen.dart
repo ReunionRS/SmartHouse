@@ -11,8 +11,6 @@ import '../../services/home_assistant_discovery_service.dart';
 
 const _orange = Color(0xFFFF7A18);
 const _orangeSoft = Color(0xFFFF8A2A);
-const _cream = Color(0xFFFFF7EF);
-const _muted = Color(0xFFA99D93);
 
 enum _Step { discover, servers, authorize, connecting, success }
 
@@ -123,7 +121,9 @@ class _HomeAssistantOnboardingScreenState
         if (result.isNotEmpty) step = _Step.servers;
       });
     } catch (_) {
-      if (mounted) setState(() => error = 'Не удалось выполнить автопоиск');
+      if (mounted) {
+        setState(() => error = 'Не удалось выполнить автопоиск');
+      }
     }
   }
 
@@ -134,7 +134,7 @@ class _HomeAssistantOnboardingScreenState
     final result = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF211711),
+        backgroundColor: Theme.of(context).colorScheme.surface,
         title: const Text('Адрес Home Assistant'),
         content: TextField(
             controller: controller,
@@ -241,7 +241,7 @@ class _HomeAssistantOnboardingScreenState
     final currentKey = currentChild.key;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0C0907),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(children: [
         const Positioned(top: -140, right: -100, child: _Glow()),
         SafeArea(
@@ -279,7 +279,8 @@ class _HomeAssistantOnboardingScreenState
         const Spacer(),
         TextButton(
             onPressed: widget.onSkip,
-            child: const Text('Пропустить', style: TextStyle(color: _muted))),
+            child: Text('Пропустить',
+                style: TextStyle(color: _secondaryText(context)))),
       ]);
 
   Widget discoverView() => Padding(
@@ -290,24 +291,37 @@ class _HomeAssistantOnboardingScreenState
           const SizedBox(height: 15),
           const Text('ПОДКЛЮЧЕНИЕ', style: _kicker),
           const SizedBox(height: 9),
-          const Text('Найдём ваш\nумный дом',
-              textAlign: TextAlign.center, style: _title),
+          Text('Найдём ваш\nумный дом',
+              textAlign: TextAlign.center, style: _titleStyle(context)),
           const SizedBox(height: 13),
-          const Text('Smart House ищет Home Assistant\nв локальной сети.',
-              textAlign: TextAlign.center, style: _body),
+          Text('Smart House ищет Home Assistant\nв локальной сети.',
+              textAlign: TextAlign.center, style: _bodyStyle(context)),
           const Spacer(),
           AnimatedBuilder(
               animation: animation,
-              builder: (_, __) => SizedBox(
-                  width: 270,
-                  height: 270,
-                  child: CustomPaint(
-                      painter: _RadarPainter(animation.value, servers.length),
-                      child: const Center(child: _AppLogoMark())))),
+              builder: (_, __) {
+                final isDark = Theme.of(context).brightness == Brightness.dark;
+                return RepaintBoundary(
+                  child: SizedBox(
+                    width: 292,
+                    height: 292,
+                    child: CustomPaint(
+                      painter: _RadarPainter(
+                        animation.value,
+                        servers.length,
+                        isDark: isDark,
+                      ),
+                      child: const Center(child: _AppLogoMark()),
+                    ),
+                  ),
+                );
+              }),
           const Spacer(),
           Text(error ?? 'Поиск устройств…',
               style: TextStyle(
-                  color: error == null ? _muted : const Color(0xFFFF8B8B),
+                  color: error == null
+                      ? _secondaryText(context)
+                      : const Color(0xFFD83B52),
                   fontSize: 12)),
           const SizedBox(height: 14),
           _SecondaryButton(
@@ -326,13 +340,13 @@ class _HomeAssistantOnboardingScreenState
           const SizedBox(height: 18),
           const Text('HOME ASSISTANT', style: _kicker),
           const SizedBox(height: 9),
-          const Text('Выберите\nсервер', style: _title),
+          Text('Выберите\nсервер', style: _titleStyle(context)),
           const SizedBox(height: 13),
           Text(
               servers.isEmpty
                   ? 'Добавьте адрес сервера вручную.'
                   : 'Найдено ${servers.length} устройств в вашей сети.',
-              style: _body),
+              style: _bodyStyle(context)),
           const SizedBox(height: 25),
           Expanded(
               child: ListView(children: [
@@ -361,13 +375,13 @@ class _HomeAssistantOnboardingScreenState
           const SizedBox(height: 18),
           const Text('АВТОРИЗАЦИЯ', style: _kicker),
           const SizedBox(height: 9),
-          const Text('Подключение к\nSmart House Hub',
-              textAlign: TextAlign.center, style: _title),
+          Text('Подключение к\nSmart House Hub',
+              textAlign: TextAlign.center, style: _titleStyle(context)),
           const SizedBox(height: 13),
-          const Text(
+          Text(
               'Аккаунт Smart House будет безопасно связан\nс локальным хабом. Второй вход не потребуется.',
               textAlign: TextAlign.center,
-              style: _body),
+              style: _bodyStyle(context)),
           const Spacer(),
           const _HaMark(),
           const Spacer(),
@@ -380,10 +394,10 @@ class _HomeAssistantOnboardingScreenState
                         color: Color(0xFFFF8B8B), fontSize: 12))),
           const _ConnectionSteps(active: 1),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'После нажатия «Продолжить» откроется браузер для входа в Home Assistant. После успешного завершения вы вернётесь в приложение.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white60, fontSize: 14),
+            style: TextStyle(color: _secondaryText(context), fontSize: 14),
           ),
           const SizedBox(height: 24),
           _PrimaryButton(label: 'Продолжить', onTap: connect),
@@ -399,10 +413,10 @@ class _HomeAssistantOnboardingScreenState
             const SizedBox(height: 35),
             const Text('SMART HOUSE', style: _kicker),
             const SizedBox(height: 10),
-            const Text('Подключаем\nваш дом',
-                textAlign: TextAlign.center, style: _title),
+            Text('Подключаем\nваш дом',
+                textAlign: TextAlign.center, style: _titleStyle(context)),
             const SizedBox(height: 15),
-            const Text('Проверяем права доступа…', style: _body)
+            Text('Проверяем права доступа…', style: _bodyStyle(context))
           ])));
 
   Widget successView() => Padding(
@@ -412,70 +426,139 @@ class _HomeAssistantOnboardingScreenState
         const Spacer(),
         const _SuccessMark(),
         const SizedBox(height: 30),
-        const Text('Готово!', style: _title),
+        Text('Готово!', style: _titleStyle(context)),
         const SizedBox(height: 15),
-        const Text(
+        Text(
             'Ваш дом успешно подключён.\nТеперь можно управлять всеми устройствами.',
             textAlign: TextAlign.center,
-            style: _body),
+            style: _bodyStyle(context)),
         const Spacer(),
         _PrimaryButton(label: 'Перейти к дому', onTap: widget.onConnected)
       ]));
 }
 
 class _RadarPainter extends CustomPainter {
-  const _RadarPainter(this.value, this.points);
+  const _RadarPainter(this.value, this.points, {required this.isDark});
   final double value;
   final int points;
+  final bool isDark;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final c = size.center(Offset.zero);
+    final center = size.center(Offset.zero);
+    final radius = size.shortestSide * .46;
+    final radarRect = Rect.fromCircle(center: center, radius: radius);
+
+    final background = Paint()
+      ..shader = RadialGradient(
+        colors: isDark
+            ? const [Color(0x293E2518), Color(0x12150E0A), Colors.transparent]
+            : const [Color(0xFFFFF7F0), Color(0x70FFE9D8), Colors.transparent],
+        stops: const [0, .68, 1],
+      ).createShader(radarRect);
+    canvas.drawCircle(center, radius, background);
+
     final ring = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
-      ..color = _orangeSoft.withValues(alpha: .16);
+      ..strokeWidth = isDark ? 1.2 : 1.35;
     for (var i = 1; i <= 3; i++) {
-      canvas.drawCircle(c, size.width * i / 7, ring);
+      ring.color =
+          _orange.withOpacity(isDark ? .22 - i * .025 : .30 - i * .035);
+      canvas.drawCircle(center, radius * i / 3, ring);
     }
-    final a = value * math.pi * 2;
-    final beam = Paint()
-      ..strokeWidth = 2
-      ..color = _orangeSoft.withValues(alpha: .38);
+
+    final pulse = (value * 3) % 1;
+    canvas.drawCircle(
+      center,
+      radius * (.34 + pulse * .66),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2 - pulse
+        ..color = _orange.withOpacity((1 - pulse) * (isDark ? .28 : .38)),
+    );
+
+    final angle = value * math.pi * 2 - math.pi / 2;
+    final sweep = Paint()
+      ..style = PaintingStyle.fill
+      ..shader = SweepGradient(
+        startAngle: angle - .72,
+        endAngle: angle,
+        colors: [Colors.transparent, _orange.withOpacity(isDark ? .24 : .31)],
+      ).createShader(radarRect);
+    canvas.drawArc(radarRect, angle - .72, .72, true, sweep);
+
+    final beamEnd = center + Offset(math.cos(angle), math.sin(angle)) * radius;
     canvas.drawLine(
-        c, c + Offset(math.cos(a), math.sin(a)) * size.width * .46, beam);
-    final dot = Paint()..color = _orangeSoft;
+      center,
+      beamEnd,
+      Paint()
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round
+        ..color = _orange.withOpacity(isDark ? .72 : .82),
+    );
+    canvas.drawCircle(
+      beamEnd,
+      3.5,
+      Paint()..color = _orange,
+    );
+
     final count = points.clamp(0, 8);
     for (var i = 0; i < count; i++) {
-      final da = i * 2.15 + .7;
+      final pointAngle = i * 2.15 + .7;
+      final pointCenter = center +
+          Offset(math.cos(pointAngle), math.sin(pointAngle)) *
+              radius *
+              (.48 + i % 2 * .22);
       canvas.drawCircle(
-          c +
-              Offset(math.cos(da), math.sin(da)) *
-                  size.width *
-                  (.22 + i % 2 * .12),
-          5,
-          dot);
+          pointCenter, 11, Paint()..color = _orange.withOpacity(.13));
+      canvas.drawCircle(
+          pointCenter,
+          5.5,
+          Paint()
+            ..color = _orange
+            ..style = PaintingStyle.fill);
+      canvas.drawCircle(
+          pointCenter,
+          7.5,
+          Paint()
+            ..color = isDark ? const Color(0xFF17120F) : Colors.white
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2);
     }
   }
 
   @override
   bool shouldRepaint(covariant _RadarPainter old) =>
-      old.value != value || old.points != points;
+      old.value != value || old.points != points || old.isDark != isDark;
 }
 
 class _AppLogoMark extends StatelessWidget {
   const _AppLogoMark();
   @override
   Widget build(BuildContext context) => Container(
-      width: 72,
-      height: 72,
+      width: 88,
+      height: 88,
       decoration: BoxDecoration(
-          gradient: const LinearGradient(colors: [_orangeSoft, _orange]),
-          borderRadius: BorderRadius.circular(24),
+          color: Theme.of(context).colorScheme.surface.withOpacity(.92),
+          border: Border.all(color: _orange.withOpacity(.72), width: 2),
+          borderRadius: BorderRadius.circular(30),
           boxShadow: [
-            BoxShadow(color: _orange.withValues(alpha: .35), blurRadius: 36)
+            BoxShadow(
+                color: _orange.withOpacity(.25),
+                blurRadius: 32,
+                spreadRadius: 7),
+            BoxShadow(
+                color: Colors.black.withOpacity(.08),
+                blurRadius: 18,
+                offset: const Offset(0, 8)),
           ]),
-      padding: const EdgeInsets.all(10),
-      child: Image.asset('Logo.png', fit: BoxFit.contain));
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: Transform.scale(
+          scale: 1.65,
+          child: Image.asset('Logo.png', fit: BoxFit.contain),
+        ),
+      ));
 }
 
 class _HaMark extends StatelessWidget {
@@ -490,8 +573,7 @@ class _HaMark extends StatelessWidget {
           borderRadius: BorderRadius.circular(32),
           boxShadow: [
             BoxShadow(
-                color: const Color(0xFF1469B1).withValues(alpha: .3),
-                blurRadius: 45)
+                color: const Color(0xFF1469B1).withOpacity(.3), blurRadius: 45)
           ]),
       child: const Icon(Icons.home_rounded, color: Colors.white, size: 58));
 }
@@ -506,7 +588,7 @@ class _Ring extends StatelessWidget {
           shape: BoxShape.circle,
           border: Border.all(color: _orange, width: 3),
           boxShadow: [
-            BoxShadow(color: _orange.withValues(alpha: .2), blurRadius: 35)
+            BoxShadow(color: _orange.withOpacity(.2), blurRadius: 35)
           ]),
       child: const Icon(Icons.home_rounded, color: _orangeSoft, size: 38));
 }
@@ -521,7 +603,7 @@ class _SuccessMark extends StatelessWidget {
           gradient: const LinearGradient(colors: [_orangeSoft, _orange]),
           borderRadius: BorderRadius.circular(38),
           boxShadow: [
-            BoxShadow(color: _orange.withValues(alpha: .34), blurRadius: 50)
+            BoxShadow(color: _orange.withOpacity(.34), blurRadius: 50)
           ]),
       child:
           const Icon(Icons.check_rounded, color: Color(0xFF321505), size: 58));
@@ -544,7 +626,7 @@ class _ServerCard extends StatelessWidget {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                    color: _orange.withValues(alpha: .13),
+                    color: _orange.withOpacity(.13),
                     borderRadius: BorderRadius.circular(16)),
                 child: const Icon(Icons.wifi_rounded, color: _orangeSoft)),
             const SizedBox(width: 12),
@@ -552,14 +634,15 @@ class _ServerCard extends StatelessWidget {
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  const Text('Home Assistant',
+                  Text('Home Assistant',
                       style: TextStyle(
-                          color: _cream,
+                          color: _primaryText(context),
                           fontWeight: FontWeight.w700,
                           fontSize: 13)),
                   const SizedBox(height: 5),
                   Text(server.baseUrl,
-                      style: const TextStyle(color: _muted, fontSize: 10))
+                      style: TextStyle(
+                          color: _secondaryText(context), fontSize: 10))
                 ])),
             AnimatedSwitcher(
                 duration: const Duration(milliseconds: 220),
@@ -575,11 +658,11 @@ class _ConnectionSteps extends StatelessWidget {
   final int active;
   @override
   Widget build(BuildContext context) => Column(children: [
-        _step(0, 'Сервер найден'),
-        _step(1, 'Авторизация'),
-        _step(2, 'Завершение')
+        _step(context, 0, 'Сервер найден'),
+        _step(context, 1, 'Авторизация'),
+        _step(context, 2, 'Завершение')
       ]);
-  Widget _step(int i, String label) => Padding(
+  Widget _step(BuildContext context, int i, String label) => Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(children: [
         Container(
@@ -587,26 +670,31 @@ class _ConnectionSteps extends StatelessWidget {
             height: 32,
             decoration: BoxDecoration(
                 color: i < active
-                    ? const Color(0xFF66D99A).withValues(alpha: .14)
+                    ? const Color(0xFF66D99A).withOpacity(.14)
                     : i == active
-                        ? _orange.withValues(alpha: .15)
-                        : Colors.white.withValues(alpha: .04),
+                        ? _orange.withOpacity(.15)
+                        : Theme.of(context).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(11),
                 border: Border.all(
                     color: i == active
-                        ? _orangeSoft.withValues(alpha: .34)
-                        : Colors.white12)),
+                        ? _orangeSoft.withOpacity(.34)
+                        : Theme.of(context).colorScheme.outlineVariant)),
             alignment: Alignment.center,
             child: i < active
                 ? const Icon(Icons.check_rounded,
                     color: Color(0xFF66D99A), size: 17)
                 : Text('${i + 1}',
-                    style:
-                        TextStyle(color: i == active ? _orangeSoft : _muted))),
+                    style: TextStyle(
+                        color: i == active
+                            ? _orangeSoft
+                            : _secondaryText(context)))),
         const SizedBox(width: 12),
         Text(label,
-            style:
-                TextStyle(color: i == active ? _cream : _muted, fontSize: 12))
+            style: TextStyle(
+                color: i == active
+                    ? _primaryText(context)
+                    : _secondaryText(context),
+                fontSize: 12))
       ]));
 }
 
@@ -623,7 +711,8 @@ class _PrimaryButton extends StatelessWidget {
           style: FilledButton.styleFrom(
               backgroundColor: _orange,
               foregroundColor: const Color(0xFF321507),
-              disabledBackgroundColor: Colors.white10,
+              disabledBackgroundColor:
+                  Theme.of(context).colorScheme.surfaceContainerHighest,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(18))),
           child: Text(label,
@@ -641,8 +730,9 @@ class _SecondaryButton extends StatelessWidget {
       child: OutlinedButton(
           onPressed: onTap,
           style: OutlinedButton.styleFrom(
-              foregroundColor: _cream,
-              side: const BorderSide(color: Colors.white12),
+              foregroundColor: _primaryText(context),
+              side: BorderSide(
+                  color: Theme.of(context).colorScheme.outlineVariant),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(18))),
           child: Text(label)));
@@ -656,7 +746,9 @@ class _SquareButton extends StatelessWidget {
   Widget build(BuildContext context) => _Glass(
       onTap: onTap,
       child: SizedBox(
-          width: 40, height: 40, child: Icon(icon, color: _cream, size: 18)));
+          width: 40,
+          height: 40,
+          child: Icon(icon, color: _primaryText(context), size: 18)));
 }
 
 class _Glass extends StatelessWidget {
@@ -676,15 +768,18 @@ class _Glass extends StatelessWidget {
               decoration: BoxDecoration(
                   gradient: LinearGradient(colors: [
                     highlighted
-                        ? _orange.withValues(alpha: .14)
-                        : Colors.white.withValues(alpha: .08),
-                    Colors.white.withValues(alpha: .03)
+                        ? _orange.withOpacity(.14)
+                        : Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withOpacity(.75),
+                    Theme.of(context).colorScheme.surface.withOpacity(.55)
                   ]),
                   borderRadius: BorderRadius.circular(22),
                   border: Border.all(
                       color: highlighted
-                          ? _orangeSoft.withValues(alpha: .4)
-                          : Colors.white12)),
+                          ? _orangeSoft.withOpacity(.4)
+                          : Theme.of(context).colorScheme.outlineVariant)),
               child: child)));
 }
 
@@ -696,8 +791,8 @@ class _Glow extends StatelessWidget {
       height: 340,
       decoration: BoxDecoration(
           gradient: RadialGradient(colors: [
-            _orange.withValues(alpha: .2),
-            _orange.withValues(alpha: 0),
+            _orange.withOpacity(.2),
+            _orange.withOpacity(0),
           ]),
           shape: BoxShape.circle));
 }
@@ -707,10 +802,21 @@ const _kicker = TextStyle(
     fontSize: 10,
     fontWeight: FontWeight.w800,
     letterSpacing: 1.8);
-const _title = TextStyle(
-    color: _cream,
+bool _isDark(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark;
+
+Color _primaryText(BuildContext context) =>
+    _isDark(context) ? const Color(0xFFFFF7EF) : const Color(0xFF17191E);
+
+Color _secondaryText(BuildContext context) =>
+    _isDark(context) ? const Color(0xFFA99D93) : const Color(0xFF6C7078);
+
+TextStyle _titleStyle(BuildContext context) => TextStyle(
+    color: _primaryText(context),
     fontSize: 34,
     height: 1.05,
     fontWeight: FontWeight.w700,
     letterSpacing: -1.2);
-const _body = TextStyle(color: _muted, fontSize: 14, height: 1.55);
+
+TextStyle _bodyStyle(BuildContext context) =>
+    TextStyle(color: _secondaryText(context), fontSize: 14, height: 1.55);

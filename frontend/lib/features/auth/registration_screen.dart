@@ -60,119 +60,133 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        backgroundColor: const Color(0xFF080A0D),
-        body: Stack(
-          fit: StackFit.expand,
-          children: [
-            Image.asset(
-              'assets/images/smart_home_interior.jpg',
-              fit: BoxFit.cover,
-              alignment: Alignment.center,
-              filterQuality: FilterQuality.low,
-            ),
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0xA6070A0E),
-                    Color(0xC40A0908),
-                    Color(0xFF07090C),
-                  ],
-                ),
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final foreground = Theme.of(context).colorScheme.onSurface;
+    return Scaffold(
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.asset(
+            dark
+                ? 'assets/images/backgrounds/smart_home_interior.jpg'
+                : 'assets/images/rooms/room_living_light.png',
+            fit: BoxFit.cover,
+            alignment: Alignment.center,
+            filterQuality: FilterQuality.low,
+          ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: dark
+                    ? const [
+                        Color(0xA6070A0E),
+                        Color(0xC40A0908),
+                        Color(0xFF07090C)
+                      ]
+                    : const [
+                        Color(0x33FFFFFF),
+                        Color(0xB8F7F3EE),
+                        Color(0xF2F7F4F0)
+                      ],
               ),
             ),
-            SafeArea(
-              child: SingleChildScrollView(
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: const EdgeInsets.fromLTRB(24, 18, 24, 30),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 470),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _backButton(context),
-                        const SizedBox(height: 48),
-                        const Text(
-                          'Создайте аккаунт',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 35,
-                            height: 1.12,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: -1,
-                          ),
+          ),
+          SafeArea(
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: const EdgeInsets.fromLTRB(24, 18, 24, 30),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 470),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _backButton(context),
+                      const SizedBox(height: 48),
+                      Text(
+                        'Создайте аккаунт',
+                        style: TextStyle(
+                          color: foreground,
+                          fontSize: 35,
+                          height: 1.12,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -1,
                         ),
-                        const SizedBox(height: 10),
-                        const Text.rich(
-                          TextSpan(children: [
-                            TextSpan(
-                                text: 'Начните управлять домом вместе со '),
-                            TextSpan(
-                              text: 'Smart House',
-                              style: TextStyle(color: _orange),
-                            ),
-                          ]),
-                          style: TextStyle(
-                            color: Colors.white60,
-                            fontSize: 16,
-                            height: 1.45,
+                      ),
+                      const SizedBox(height: 10),
+                      Text.rich(
+                        const TextSpan(children: [
+                          TextSpan(text: 'Начните управлять домом вместе со '),
+                          TextSpan(
+                            text: 'Smart House',
+                            style: TextStyle(color: _orange),
                           ),
+                        ]),
+                        style: TextStyle(
+                          color: foreground.withOpacity(.66),
+                          fontSize: 16,
+                          height: 1.45,
                         ),
-                        const SizedBox(height: 35),
-                        _form(),
-                        const SizedBox(height: 24),
-                        Center(
-                          child: TextButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            child: const Text.rich(
-                              TextSpan(children: [
-                                TextSpan(
-                                  text: 'Уже есть аккаунт? ',
-                                  style: TextStyle(color: Colors.white54),
+                      ),
+                      const SizedBox(height: 35),
+                      _form(),
+                      const SizedBox(height: 24),
+                      Center(
+                        child: TextButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text.rich(
+                            TextSpan(children: [
+                              TextSpan(
+                                text: 'Уже есть аккаунт? ',
+                                style: TextStyle(color: Colors.white54),
+                              ),
+                              TextSpan(
+                                text: 'Войти',
+                                style: TextStyle(
+                                  color: _orange,
+                                  fontWeight: FontWeight.w600,
                                 ),
-                                TextSpan(
-                                  text: 'Войти',
-                                  style: TextStyle(
-                                    color: _orange,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ]),
-                            ),
+                              ),
+                            ]),
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
             ),
-          ],
-        ),
-      );
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _backButton(BuildContext context) => Material(
-        color: const Color(0xE51A1B1F),
+        color: Theme.of(context).brightness == Brightness.dark
+            ? const Color(0xE51A1B1F)
+            : Colors.white.withOpacity(.68),
         borderRadius: BorderRadius.circular(18),
         clipBehavior: Clip.antiAlias,
         child: IconButton(
           onPressed: () => Navigator.of(context).pop(),
-          icon:
-              const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white),
+          icon: Icon(Icons.arrow_back_ios_new_rounded,
+              color: Theme.of(context).colorScheme.onSurface),
         ),
       );
 
   Widget _form() => Container(
         padding: const EdgeInsets.all(13),
         decoration: BoxDecoration(
-          color: const Color(0xED121316),
+          color: Theme.of(context).brightness == Brightness.dark
+              ? const Color(0xED121316)
+              : Colors.white.withOpacity(.64),
           borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: Colors.white.withValues(alpha: .18)),
+          border: Border.all(color: Colors.white.withOpacity(.18)),
         ),
         child: Form(
           key: _formKey,
@@ -257,14 +271,18 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         onFieldSubmitted: onSubmitted,
         validator: validator,
         autovalidateMode: AutovalidateMode.onUserInteraction,
-        style: const TextStyle(color: Colors.white, fontSize: 16),
+        style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurface, fontSize: 16),
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: const TextStyle(color: Colors.white38),
+          hintStyle:
+              TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
           prefixIcon: Icon(icon, color: _orange),
           suffixIcon: suffix,
           filled: true,
-          fillColor: Colors.black.withValues(alpha: .27),
+          fillColor: Theme.of(context).brightness == Brightness.dark
+              ? Colors.black.withOpacity(.27)
+              : Colors.white.withOpacity(.62),
           contentPadding: const EdgeInsets.symmetric(vertical: 20),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(21),
@@ -272,7 +290,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(21),
-            borderSide: BorderSide(color: Colors.white.withValues(alpha: .15)),
+            borderSide: BorderSide(color: Colors.white.withOpacity(.15)),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(21),
@@ -295,7 +313,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
               colors: [Color(0xFFF15A00), Color(0xFFFF9C27)],
             ),
             boxShadow: [
-              BoxShadow(color: _orange.withValues(alpha: .32), blurRadius: 22),
+              BoxShadow(color: _orange.withOpacity(.32), blurRadius: 22),
             ],
           ),
           child: FilledButton(

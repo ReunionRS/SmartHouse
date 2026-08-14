@@ -6,7 +6,7 @@ import { pool } from '../db.js';
 import { asyncRoute, normalizeBaseUrl } from '../lib/http.js';
 import { encryptToken } from '../lib/token-crypto.js';
 import { authRequired } from '../middleware/auth.js';
-import { getConnection, haWebSocket } from '../services/home-assistant.js';
+import { getConnection, haRest, haWebSocket } from '../services/home-assistant.js';
 
 export const oauthRouter = Router();
 oauthRouter.get('/ha-oauth-client', (req, res) => {
@@ -20,6 +20,68 @@ oauthRouter.get('/ha-oauth-web-callback', (req, res) => {
 });
 
 const router = Router();
+
+const roomTypeByIcon = new Map([
+  ['mdi:sofa-outline', 'living_room'],
+  ['mdi:bed-outline', 'bedroom'],
+  ['mdi:silverware-fork-knife', 'kitchen'],
+  ['mdi:shower', 'bathroom'],
+  ['mdi:desk', 'office'],
+  ['mdi:garage', 'garage'],
+  ['mdi:table-chair', 'dining_room'],
+  ['mdi:baby-face-outline', 'kids_room'],
+  ['mdi:door-open', 'entryway'],
+  ['mdi:stairs', 'hallway'],
+  ['mdi:washing-machine', 'laundry_room'],
+  ['mdi:food-apple-outline', 'pantry'],
+  ['mdi:balcony', 'balcony'],
+  ['mdi:flower-outline', 'terrace'],
+  ['mdi:greenhouse', 'garden'],
+  ['mdi:home-floor-negative-1', 'basement'],
+  ['mdi:tools', 'workshop'],
+]);
+const allowedRoomTypes = new Set(roomTypeByIcon.values());
+
+const loadRoomTypes = async (userId) => {
+  const { rows } = await pool.query(
+    "SELECT value FROM user_app_state WHERE user_id=$1 AND state_key='room_types'",
+    [userId],
+  );
+  const values = Array.isArray(rows[0]?.value) ? rows[0].value : [];
+  return new Map(values
+    .filter((item) => item && item.area_id && allowedRoomTypes.has(item.room_type))
+    .map((item) => [String(item.area_id), String(item.room_type)]));
+};
+
+const saveRoomTypes = async (userId, mappings) => {
+  const value = [...mappings].map(([area_id, room_type]) => ({ area_id, room_type }));
+  await pool.query(
+    `INSERT INTO user_app_state (user_id,state_key,value)
+     VALUES ($1,'room_types',$2::jsonb)
+     ON CONFLICT (user_id,state_key)
+     DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()`,
+    [userId, JSON.stringify(value)],
+  );
+};
+
+const attachRoomTypes = async (userId, areas) => {
+  const mappings = await loadRoomTypes(userId);
+  let migrated = false;
+  const result = areas.map((area) => {
+    const areaId = String(area.area_id || area.id || '');
+    let roomType = mappings.get(areaId) || '';
+    if (!roomType) {
+      roomType = roomTypeByIcon.get(String(area.icon || '')) || '';
+      if (roomType) {
+        mappings.set(areaId, roomType);
+        migrated = true;
+      }
+    }
+    return { ...area, area_id: areaId, room_type: roomType };
+  });
+  if (migrated) await saveRoomTypes(userId, mappings);
+  return result;
+};
 
 const pairingTokenHash = (token) =>
   createHash('sha256').update(token, 'utf8').digest('hex');
@@ -191,14 +253,94 @@ router.get('/rooms', asyncRoute(async (req, res) => {
     haWebSocket(req.user.id, { type: 'config/device_registry/list' }),
     haWebSocket(req.user.id, { type: 'config/entity_registry/list' }),
   ]);
+  const typedAreas = await attachRoomTypes(req.user.id, areas);
   const deviceAreas = new Map(devices.map((item) => [item.id, item.area_id]));
-  res.json({ items: areas.map((area) => ({ ...area, area_id: area.area_id || area.id, device_ids: devices.filter((item) => item.area_id === (area.area_id || area.id)).map((item) => item.id), entity_ids: entities.filter((item) => (item.area_id || deviceAreas.get(item.device_id)) === (area.area_id || area.id)).map((item) => item.entity_id) })) });
+  res.json({ items: typedAreas.map((area) => ({ ...area, device_ids: devices.filter((item) => item.area_id === area.area_id).map((item) => item.id), entity_ids: entities.filter((item) => (item.area_id || deviceAreas.get(item.device_id)) === area.area_id).map((item) => item.entity_id) })) });
+}));
+
+router.get('/snapshot', asyncRoute(async (req, res) => {
+  const [areas, registryDevices, registryEntities, states] = await Promise.all([
+    haWebSocket(req.user.id, { type: 'config/area_registry/list' }),
+    haWebSocket(req.user.id, { type: 'config/device_registry/list' }),
+    haWebSocket(req.user.id, { type: 'config/entity_registry/list' }),
+    haRest(req.user.id, '/api/states'),
+  ]);
+
+  const areaByDevice = new Map(
+    registryDevices.map((device) => [device.id, device.area_id || '']),
+  );
+  const stateByEntity = new Map(
+    states.map((state) => [state.entity_id, state]),
+  );
+  const supportedDomains = new Set([
+    'light', 'switch', 'sensor', 'binary_sensor', 'climate', 'cover',
+    'lock', 'camera', 'fan', 'humidifier', 'media_player',
+  ]);
+
+  const items = registryEntities
+    .filter((entity) => !entity.disabled_by)
+    .map((entity) => {
+      const state = stateByEntity.get(entity.entity_id);
+      const attributes = state?.attributes || {};
+      const domain = entity.entity_id.split('.')[0];
+      return {
+        entity_id: entity.entity_id,
+        area_id: entity.area_id || areaByDevice.get(entity.device_id) || '',
+        device_id: entity.device_id || '',
+        domain,
+        name: entity.name || entity.original_name || attributes.friendly_name || entity.entity_id,
+        state: state?.state ?? 'unknown',
+        available: state != null && !['unknown', 'unavailable'].includes(state.state),
+        attributes,
+        last_changed: state?.last_changed || '',
+        last_updated: state?.last_updated || '',
+      };
+    })
+    .filter((entity) => entity.area_id && supportedDomains.has(entity.domain));
+
+  const typedAreas = await attachRoomTypes(req.user.id, areas);
+  res.json({
+    rooms: typedAreas.map((area) => ({
+      ...area,
+      entity_ids: items
+        .filter((entity) => entity.area_id === area.area_id)
+        .map((entity) => entity.entity_id),
+      device_ids: registryDevices
+        .filter((device) => device.area_id === area.area_id)
+        .map((device) => device.id),
+    })),
+    devices: items,
+    fetched_at: new Date().toISOString(),
+  });
 }));
 router.post('/rooms', asyncRoute(async (req, res) => {
   const name = String(req.body.name || '').trim();
+  const roomType = String(req.body.room_type || '').trim();
   if (!name) return res.status(400).json({ error: 'Название комнаты обязательно' });
-  const item = await haWebSocket(req.user.id, { type: 'config/area_registry/create', name, aliases: req.body.aliases || [], labels: req.body.labels || [] });
-  res.status(201).json({ item });
+  if (!allowedRoomTypes.has(roomType)) return res.status(400).json({ error: 'Неизвестный тип комнаты' });
+  const item = await haWebSocket(req.user.id, {
+    type: 'config/area_registry/create',
+    name,
+    icon: String(req.body.icon || '') || null,
+    aliases: req.body.aliases || [],
+    labels: req.body.labels || [],
+  });
+  const areaId = String(item.area_id || item.id || '');
+  const mappings = await loadRoomTypes(req.user.id);
+  mappings.set(areaId, roomType);
+  await saveRoomTypes(req.user.id, mappings);
+  res.status(201).json({ item: { ...item, area_id: areaId, room_type: roomType } });
+}));
+router.delete('/rooms/:areaId', asyncRoute(async (req, res) => {
+  const areaId = String(req.params.areaId || '').trim();
+  if (!areaId) return res.status(400).json({ error: 'Идентификатор комнаты обязателен' });
+  await haWebSocket(req.user.id, {
+    type: 'config/area_registry/delete',
+    area_id: areaId,
+  });
+  const mappings = await loadRoomTypes(req.user.id);
+  if (mappings.delete(areaId)) await saveRoomTypes(req.user.id, mappings);
+  res.json({ ok: true });
 }));
 
 export default router;

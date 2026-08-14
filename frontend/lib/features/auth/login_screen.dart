@@ -93,29 +93,39 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      backgroundColor: const Color(0xFF080A0D),
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Stack(
         fit: StackFit.expand,
         children: [
           Image.asset(
-            'assets/images/smart_home_interior.jpg',
+            dark
+                ? 'assets/images/backgrounds/smart_home_interior.jpg'
+                : 'assets/images/rooms/room_living_light.png',
             fit: BoxFit.cover,
             alignment: Alignment.center,
             filterQuality: FilterQuality.low,
           ),
-          const DecoratedBox(
+          DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                stops: [0, .25, .58, 1],
-                colors: [
-                  Color(0xA6070A0E),
-                  Color(0x8A07090D),
-                  Color(0xD40A0908),
-                  Color(0xFF07090C),
-                ],
+                stops: const [0, .25, .58, 1],
+                colors: dark
+                    ? const [
+                        Color(0xA6070A0E),
+                        Color(0x8A07090D),
+                        Color(0xD40A0908),
+                        Color(0xFF07090C),
+                      ]
+                    : const [
+                        Color(0x22FFFFFF),
+                        Color(0x55FFFFFF),
+                        Color(0xB8F7F3EE),
+                        Color(0xF2F7F4F0),
+                      ],
               ),
             ),
           ),
@@ -145,10 +155,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             _welcome(),
                             const SizedBox(height: 34),
                             _authCard(),
-                            const SizedBox(height: 27),
-                            _separator(),
-                            const SizedBox(height: 21),
-                            _socialButtons(),
                             const SizedBox(height: 22),
                             _registrationStub(),
                           ],
@@ -165,32 +171,36 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _welcome() => const Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text.rich(
-            TextSpan(children: [
-              TextSpan(text: 'Добро пожаловать\nв '),
-              TextSpan(
-                text: 'Smart House',
-                style: TextStyle(color: _orange),
-              ),
-            ]),
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 36,
-              height: 1.15,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -1.1,
+  Widget _welcome() {
+    final foreground = Theme.of(context).colorScheme.onSurface;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text.rich(
+          const TextSpan(children: [
+            TextSpan(text: 'Добро пожаловать\nв '),
+            TextSpan(
+              text: 'Smart House',
+              style: TextStyle(color: _orange),
             ),
+          ]),
+          style: TextStyle(
+            color: foreground,
+            fontSize: 36,
+            height: 1.15,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -1.1,
           ),
-          SizedBox(height: 15),
-          Text(
-            'Войдите, чтобы управлять своим домом',
-            style: TextStyle(color: Colors.white60, fontSize: 17, height: 1.45),
-          ),
-        ],
-      );
+        ),
+        const SizedBox(height: 15),
+        Text(
+          'Войдите, чтобы управлять своим домом',
+          style: TextStyle(
+              color: foreground.withOpacity(.66), fontSize: 17, height: 1.45),
+        ),
+      ],
+    );
+  }
 
   Widget _authCard() => _GlassPanel(
         radius: 27,
@@ -227,7 +237,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     obscure
                         ? Icons.visibility_off_outlined
                         : Icons.visibility_outlined,
-                    color: Colors.white54,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -243,9 +253,12 @@ class _LoginScreenState extends State<LoginScreen> {
                       checkColor: Colors.black,
                       side: const BorderSide(color: _orange, width: 1.6),
                     ),
-                    const Text(
+                    Text(
                       'Запомнить меня',
-                      style: TextStyle(color: Colors.white60, fontSize: 13),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 13,
+                      ),
                     ),
                     const Spacer(),
                     TextButton(
@@ -279,7 +292,8 @@ class _LoginScreenState extends State<LoginScreen> {
       TextFormField(
         controller: controller,
         focusNode: focusNode,
-        style: const TextStyle(color: Colors.white, fontSize: 16),
+        style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurface, fontSize: 16),
         keyboardType: keyboardType,
         textInputAction: action,
         obscureText: obscureText,
@@ -295,11 +309,14 @@ class _LoginScreenState extends State<LoginScreen> {
         autovalidateMode: AutovalidateMode.onUserInteraction,
         decoration: InputDecoration(
           hintText: label,
-          hintStyle: const TextStyle(color: Colors.white38),
+          hintStyle:
+              TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
           prefixIcon: Icon(icon, color: _orange, size: 22),
           suffixIcon: suffix,
           filled: true,
-          fillColor: Colors.black.withValues(alpha: .25),
+          fillColor: Theme.of(context).brightness == Brightness.dark
+              ? Colors.black.withOpacity(.25)
+              : Colors.white.withOpacity(.88),
           contentPadding: const EdgeInsets.symmetric(vertical: 19),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(21),
@@ -307,7 +324,11 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(21),
-            borderSide: BorderSide(color: Colors.white.withValues(alpha: .15)),
+            borderSide: BorderSide(
+              color: Theme.of(context).brightness == Brightness.dark
+                  ? Colors.white.withOpacity(.15)
+                  : Colors.black.withOpacity(.08),
+            ),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(21),
@@ -329,10 +350,10 @@ class _LoginScreenState extends State<LoginScreen> {
             gradient: const LinearGradient(
               colors: [Color(0xFFF15A00), Color(0xFFFF9C27)],
             ),
-            border: Border.all(color: _warmOrange.withValues(alpha: .75)),
+            border: Border.all(color: _warmOrange.withOpacity(.75)),
             boxShadow: [
               BoxShadow(
-                color: _orange.withValues(alpha: .32),
+                color: _orange.withOpacity(.32),
                 blurRadius: 21,
                 spreadRadius: 1,
               ),
@@ -369,71 +390,6 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       );
 
-  Widget _separator() => Row(
-        children: [
-          Expanded(child: Divider(color: Colors.white.withValues(alpha: .14))),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'или войдите с помощью',
-              style: TextStyle(color: Colors.white38, fontSize: 13),
-            ),
-          ),
-          Expanded(child: Divider(color: Colors.white.withValues(alpha: .14))),
-        ],
-      );
-
-  Widget _socialButtons() => Row(
-        children: [
-          Expanded(
-            child: _SocialButton(
-              label: 'Apple',
-              onTap: () => _stub('Вход через Apple'),
-              icon: const Icon(Icons.apple, color: Colors.white, size: 31),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _SocialButton(
-              label: 'Google',
-              onTap: () => _stub('Вход через Google'),
-              icon: const Text(
-                'G',
-                style: TextStyle(
-                  color: Color(0xFF4285F4),
-                  fontSize: 29,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: _SocialButton(
-              label: 'VK',
-              onTap: () => _stub('Вход через VK'),
-              icon: Container(
-                width: 31,
-                height: 31,
-                alignment: Alignment.center,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF2787F5),
-                  shape: BoxShape.circle,
-                ),
-                child: const Text(
-                  'VK',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      );
-
   Widget _registrationStub() => _GlassButton(
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute<void>(
@@ -452,59 +408,36 @@ class _LoginScreenState extends State<LoginScreen> {
               height: 52,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: _orange.withValues(alpha: .10),
+                color: _orange.withOpacity(.10),
               ),
               child: const Icon(Icons.person_add_alt_1_rounded,
                   color: _orange, size: 27),
             ),
             const SizedBox(width: 15),
-            const Expanded(
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Нет аккаунта?',
+                    'Создать аккаунт',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onSurface,
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  SizedBox(height: 4),
+                  const SizedBox(height: 4),
                   Text(
-                    'Создайте аккаунт, чтобы начать',
-                    style: TextStyle(color: Colors.white54, fontSize: 13),
+                    'Начните управление своим умным домом',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      fontSize: 13,
+                    ),
                   ),
                 ],
               ),
             ),
             const Icon(Icons.chevron_right_rounded, color: _orange, size: 29),
-          ],
-        ),
-      );
-}
-
-class _SocialButton extends StatelessWidget {
-  const _SocialButton({
-    required this.label,
-    required this.icon,
-    required this.onTap,
-  });
-
-  final String label;
-  final Widget icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => _GlassButton(
-        onTap: onTap,
-        radius: 22,
-        padding: const EdgeInsets.symmetric(vertical: 17),
-        child: Column(
-          children: [
-            SizedBox(width: 34, height: 34, child: Center(child: icon)),
-            const SizedBox(height: 8),
-            Text(label, style: const TextStyle(color: Colors.white60)),
           ],
         ),
       );
@@ -525,10 +458,15 @@ class _GlassButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Material(
-        color: const Color(0xE51A1B1F),
+        color: Theme.of(context).brightness == Brightness.dark
+            ? const Color(0xE51A1B1F)
+            : Colors.white.withOpacity(.92),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(radius),
-          side: BorderSide(color: Colors.white.withValues(alpha: .14)),
+          side: BorderSide(
+              color: Theme.of(context).brightness == Brightness.dark
+                  ? Colors.white.withOpacity(.14)
+                  : Colors.white.withOpacity(.9)),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -553,12 +491,17 @@ class _GlassPanel extends StatelessWidget {
   Widget build(BuildContext context) => Container(
         padding: padding,
         decoration: BoxDecoration(
-          color: const Color(0xED121316),
+          color: Theme.of(context).brightness == Brightness.dark
+              ? const Color(0xED121316)
+              : Colors.white.withOpacity(.90),
           borderRadius: BorderRadius.circular(radius),
-          border: Border.all(color: Colors.white.withValues(alpha: .19)),
+          border: Border.all(
+              color: Theme.of(context).brightness == Brightness.dark
+                  ? Colors.white.withOpacity(.19)
+                  : Colors.white.withOpacity(.9)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: .24),
+              color: Colors.black.withOpacity(.24),
               blurRadius: 20,
               offset: const Offset(0, 8),
             ),

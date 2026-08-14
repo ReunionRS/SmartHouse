@@ -1,13 +1,17 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
 import '../core/app_language.dart';
 import '../core/i18n.dart';
+import '../core/room_localization.dart';
 import '../models/session_models.dart';
 import '../models/home_assistant_room.dart';
 import '../models/local_room_device.dart';
 import '../services/auth_service.dart';
 import '../services/room_service.dart';
 import '../features/settings/profile_page.dart';
+import '../features/assistant/ai_chat_page.dart';
 import '../features/notifications/smart_notifications_page.dart';
 import '../features/rooms/room_detail_page.dart';
 import '../features/scenes/scenes_page.dart';
@@ -36,6 +40,8 @@ class SmartHomeShell extends StatefulWidget {
     required this.onLogout,
     required this.isDarkMode,
     required this.onToggleTheme,
+    required this.themeMode,
+    required this.onThemeModeChanged,
     required this.language,
     required this.onLanguageChanged,
   });
@@ -44,6 +50,8 @@ class SmartHomeShell extends StatefulWidget {
   final Future<void> Function() onLogout;
   final bool isDarkMode;
   final VoidCallback onToggleTheme;
+  final ThemeMode themeMode;
+  final Future<void> Function(ThemeMode mode) onThemeModeChanged;
   final AppLanguage language;
   final Future<void> Function(AppLanguage language) onLanguageChanged;
 
@@ -58,6 +66,7 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
   String? error;
   List<HomeAssistantRoom> rooms = const [];
   List<LocalRoomDevice> localDevices = const [];
+  bool initialHomeLoading = true;
   final RoomService roomService = RoomService();
 
   @override
@@ -68,6 +77,17 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
 
   Future<void> load() async {
     await Future.wait([loadEntities(), loadRoomsAndDevices()]);
+  }
+
+  void openAiAssistant() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withOpacity(.42),
+      builder: (_) => const AiChatSheet(),
+    );
   }
 
   Future<void> loadEntities() async {
@@ -88,34 +108,48 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
   }
 
   Future<void> loadRoomsAndDevices() async {
-    final values = await Future.wait([
-      roomService.load(widget.session.id),
-      roomService.loadDevices(widget.session.id),
-    ]);
-    if (mounted) {
-      setState(() {
-        rooms = values[0] as List<HomeAssistantRoom>;
-        localDevices = values[1] as List<LocalRoomDevice>;
-      });
+    try {
+      final values = await Future.wait([
+        roomService.load(widget.session.id),
+        roomService.loadDevices(widget.session.id),
+      ]);
+      if (mounted) {
+        setState(() {
+          rooms = values[0] as List<HomeAssistantRoom>;
+          localDevices = values[1] as List<LocalRoomDevice>;
+          initialHomeLoading = false;
+        });
+      }
+    } finally {
+      if (mounted && initialHomeLoading) {
+        setState(() => initialHomeLoading = false);
+      }
     }
   }
 
   Future<void> openCreateRoom() async {
-    final created = await showModalBottomSheet<bool>(
+    final created = await showModalBottomSheet<HomeAssistantRoom>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _CreateRoomSheet(
-        onCreate: (name, icon) => roomService.create(
+        onCreate: (name, icon, roomType) => roomService.create(
           userId: widget.session.id,
           name: name,
           icon: icon,
+          roomType: roomType,
         ),
       ),
     );
-    if (created == true) {
-      await loadRoomsAndDevices();
-      if (mounted) setState(() => index = 1);
+    if (created != null && mounted) {
+      setState(() {
+        rooms = [
+          ...rooms.where((room) => room.areaId != created.areaId),
+          created,
+        ];
+        index = 1;
+      });
+      loadRoomsAndDevices();
     }
   }
 
@@ -150,8 +184,13 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
       ),
     );
     if (selected == null) return;
+    setState(() {
+      localDevices = [
+        for (final device in localDevices)
+          device.copyWith(isFavorite: selected.contains(device.id)),
+      ];
+    });
     await roomService.setFavoriteDevices(widget.session.id, selected);
-    await loadRoomsAndDevices();
   }
 
   Future<void> deleteRoom(HomeAssistantRoom room) async {
@@ -161,9 +200,9 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
         title: Text(
             I18n.t('Удалить комнату?', 'Комнатаез быдтыны?', 'Delete room?')),
         content: Text(I18n.t(
-          'Комната «${room.name}» и добавленные в неё устройства будут удалены.',
-          '«${room.name}» комната но соын устройствaос быдтозы.',
-          'The room “${room.name}” and its devices will be deleted.',
+          'Комната «${localizedRoomName(room)}» и добавленные в неё устройства будут удалены.',
+          '«${localizedRoomName(room)}» комната но соын устройствaос быдтозы.',
+          'The room “${localizedRoomName(room)}” and its devices will be deleted.',
         )),
         actions: [
           TextButton(
@@ -179,8 +218,25 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
       ),
     );
     if (confirmed != true) return;
-    await roomService.delete(widget.session.id, room.areaId);
-    await loadRoomsAndDevices();
+    final previousRooms = rooms;
+    final previousDevices = localDevices;
+    setState(() {
+      rooms = rooms.where((item) => item.areaId != room.areaId).toList();
+      localDevices =
+          localDevices.where((device) => device.roomId != room.areaId).toList();
+    });
+    try {
+      await roomService.delete(widget.session.id, room.areaId);
+    } catch (exception) {
+      if (!mounted) return;
+      setState(() {
+        rooms = previousRooms;
+        localDevices = previousDevices;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(exception.toString().replaceFirst('Exception: ', '')),
+      ));
+    }
   }
 
   @override
@@ -234,6 +290,8 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
         auth: widget.auth,
         isDarkMode: widget.isDarkMode,
         onToggleTheme: widget.onToggleTheme,
+        themeMode: widget.themeMode,
+        onThemeModeChanged: widget.onThemeModeChanged,
         language: widget.language,
         onLanguageChanged: widget.onLanguageChanged,
         onLogout: widget.onLogout,
@@ -246,7 +304,9 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
       body: Stack(children: [
         Positioned.fill(
           child: Image.asset(
-            'assets/images/smart_home_interior.jpg',
+            dark
+                ? 'assets/images/backgrounds/smart_home_interior.jpg'
+                : 'assets/images/rooms/room_living_light.png',
             fit: BoxFit.cover,
             filterQuality: FilterQuality.low,
             opacity: AlwaysStoppedAnimation(dark ? 1 : .10),
@@ -297,6 +357,34 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
               },
               child: KeyedSubtree(key: ValueKey(index), child: pages[index])),
         ),
+        if (initialHomeLoading && index <= 2)
+          Positioned.fill(
+            child: ColoredBox(
+              color: Theme.of(context).scaffoldBackgroundColor,
+              child: Center(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const SizedBox(
+                    width: 34,
+                    height: 34,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.7,
+                      color: _orange,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    I18n.t('Синхронизация с хабом…', 'Хабен ӵош синхронизация…',
+                        'Syncing with hub…'),
+                    style: TextStyle(
+                      color: _secondary(context),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ]),
+              ),
+            ),
+          ),
       ]),
       bottomNavigationBar: _GlassDock(
         index: index,
@@ -304,7 +392,7 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
           tabSlideDirection = value > index ? 1 : -1;
           index = value;
         }),
-        onAdd: openCreateRoom,
+        onAssistant: openAiAssistant,
       ),
     );
   }
@@ -508,7 +596,7 @@ class _RoomsPage extends StatelessWidget {
                 label: const Text('Добавить комнату'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: _orangeSoft,
-                  side: BorderSide(color: _orange.withValues(alpha: .45)),
+                  side: BorderSide(color: _orange.withOpacity(.45)),
                   minimumSize: const Size.fromHeight(52),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(18)),
@@ -531,16 +619,17 @@ class _AddFavoriteCard extends StatelessWidget {
         child: Container(
           height: 104,
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: .045),
+            color: Colors.white.withOpacity(.045),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.white.withValues(alpha: .16)),
+            border: Border.all(color: Colors.white.withOpacity(.16)),
           ),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          child: Row(mainAxisAlignment: MainAxisAlignment.start, children: [
+            const SizedBox(width: 16),
             Container(
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                color: _orange.withValues(alpha: .14),
+                color: _orange.withOpacity(.14),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.add_rounded, color: _orangeSoft),
@@ -594,7 +683,7 @@ class _LocalDeviceCard extends StatelessWidget {
             colors: [Color(0xFF29313C), Color(0xFF121820)],
           ),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withValues(alpha: .14)),
+          border: Border.all(color: Colors.white.withOpacity(.14)),
         ),
         child: Stack(children: [
           if (asset != null)
@@ -671,16 +760,18 @@ class _FavoritePickerSheetState extends State<_FavoritePickerSheet> {
           20,
           20 + MediaQuery.paddingOf(context).bottom,
         ),
-        decoration: const BoxDecoration(
-          color: Color(0xFF171D26),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        decoration: BoxDecoration(
+          color: Theme.of(context).brightness == Brightness.dark
+              ? const Color(0xF2171D26)
+              : Colors.white.withOpacity(.92),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           Container(
             width: 38,
             height: 4,
             decoration: BoxDecoration(
-              color: Colors.white24,
+              color: Theme.of(context).dividerColor,
               borderRadius: BorderRadius.circular(4),
             ),
           ),
@@ -690,8 +781,8 @@ class _FavoritePickerSheetState extends State<_FavoritePickerSheet> {
               child: Text(
                 I18n.t('Избранные устройства', 'Быръем устройстваос',
                     'Favorite devices'),
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface,
                   fontSize: 20,
                   fontWeight: FontWeight.w700,
                 ),
@@ -713,7 +804,9 @@ class _FavoritePickerSheetState extends State<_FavoritePickerSheet> {
                   'Add a device to a room first.',
                 ),
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.white60, height: 1.4),
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    height: 1.4),
               ),
             )
           else
@@ -731,30 +824,44 @@ class _FavoritePickerSheetState extends State<_FavoritePickerSheet> {
                       ? widget.rooms[roomIndex].name
                       : I18n.t('Комната не указана', 'Комната ӧвӧл',
                           'Room not specified');
-                  return CheckboxListTile(
-                    value: checked,
-                    onChanged: (value) => setState(() {
-                      if (value == true) {
-                        selected.add(device.id);
-                      } else {
-                        selected.remove(device.id);
-                      }
-                    }),
-                    activeColor: _orange,
-                    secondary: SizedBox(
-                      width: 44,
-                      height: 44,
-                      child: Image.asset(
-                        DeviceAssetCatalog.forType(device.type) ??
-                            DeviceAssetCatalog.hub,
-                        fit: BoxFit.contain,
-                      ),
+                  return DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? Colors.white.withOpacity(.04)
+                          : const Color(0xFFF4F5F7),
+                      borderRadius: BorderRadius.circular(18),
                     ),
-                    title: Text(device.name,
-                        style: const TextStyle(color: Colors.white)),
-                    subtitle: Text(
-                      roomName,
-                      style: const TextStyle(color: Colors.white54),
+                    child: CheckboxListTile(
+                      value: checked,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18)),
+                      onChanged: (value) => setState(() {
+                        if (value == true) {
+                          selected.add(device.id);
+                        } else {
+                          selected.remove(device.id);
+                        }
+                      }),
+                      activeColor: _orange,
+                      secondary: SizedBox(
+                        width: 44,
+                        height: 44,
+                        child: Image.asset(
+                          DeviceAssetCatalog.forType(device.type) ??
+                              DeviceAssetCatalog.hub,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                      title: Text(device.name,
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.onSurface,
+                              fontWeight: FontWeight.w600)),
+                      subtitle: Text(
+                        roomName,
+                        style: TextStyle(
+                            color:
+                                Theme.of(context).colorScheme.onSurfaceVariant),
+                      ),
                     ),
                   );
                 },
@@ -777,7 +884,7 @@ class _RoomsEmptyState extends StatelessWidget {
               width: 52,
               height: 52,
               decoration: BoxDecoration(
-                color: _orange.withValues(alpha: .14),
+                color: _orange.withOpacity(.14),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.meeting_room_outlined,
@@ -866,7 +973,11 @@ class _RoomCard extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(19),
           child: Stack(fit: StackFit.expand, children: [
-            RoomAtlasImage(index: roomIndex, roomName: room.name),
+            RoomAtlasImage(
+                index: roomIndex,
+                roomName: localizedRoomName(room),
+                roomIcon: room.icon,
+                roomType: room.roomType),
             const DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -929,7 +1040,7 @@ class _RoomCard extends StatelessWidget {
                   child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(room.name,
+                        Text(localizedRoomName(room),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -957,46 +1068,99 @@ class _RoomCard extends StatelessWidget {
 
 class _CreateRoomSheet extends StatefulWidget {
   const _CreateRoomSheet({required this.onCreate});
-  final Future<HomeAssistantRoom> Function(String name, String icon) onCreate;
+  final Future<HomeAssistantRoom> Function(
+      String name, String icon, String roomType) onCreate;
 
   @override
   State<_CreateRoomSheet> createState() => _CreateRoomSheetState();
 }
 
 class _CreateRoomSheetState extends State<_CreateRoomSheet> {
-  final nameController = TextEditingController();
   String icon = 'mdi:sofa-outline';
   bool saving = false;
   String? error;
 
-  static const icons = <String, (String, String)>{
-    'mdi:sofa-outline': ('assets/images/room_living.jpg', 'Гостиная'),
-    'mdi:bed-outline': ('assets/images/room_bedroom.jpg', 'Спальня'),
-    'mdi:silverware-fork-knife': ('assets/images/room_kitchen.jpg', 'Кухня'),
-    'mdi:shower': ('assets/images/room_bathroom.jpg', 'Ванная'),
-    'mdi:desk': ('assets/images/room_office.jpg', 'Кабинет'),
-    'mdi:garage': ('assets/images/room_hallway.jpg', 'Гараж'),
-  };
-
-  @override
-  void dispose() {
-    nameController.dispose();
-    super.dispose();
-  }
+  Map<String, (String, String)> get icons => {
+        'mdi:sofa-outline': (
+          'assets/images/rooms/room_living.jpg',
+          I18n.t('Гостиная', 'Куно комната', 'Living room', tt: 'Кунак бүлмәсе')
+        ),
+        'mdi:bed-outline': (
+          'assets/images/rooms/room_bedroom.jpg',
+          I18n.t('Спальня', 'Узон комната', 'Bedroom', tt: 'Йокы бүлмәсе')
+        ),
+        'mdi:silverware-fork-knife': (
+          'assets/images/rooms/room_dining.png',
+          I18n.t('Кухня', 'Кухня', 'Kitchen', tt: 'Аш бүлмәсе')
+        ),
+        'mdi:shower': (
+          'assets/images/rooms/room_bathroom.jpg',
+          I18n.t('Ванная', 'Миськон комната', 'Bathroom', tt: 'Юыну бүлмәсе')
+        ),
+        'mdi:desk': (
+          'assets/images/rooms/room_office.jpg',
+          I18n.t('Кабинет', 'Уж комната', 'Office', tt: 'Эш бүлмәсе')
+        ),
+        'mdi:garage': (
+          'assets/images/rooms/room_hallway.jpg',
+          I18n.t('Гараж', 'Гараж', 'Garage', tt: 'Гараж')
+        ),
+        'mdi:table-chair': (
+          'assets/images/rooms/room_kitchen.jpg',
+          I18n.t('Столовая', 'Сиён комната', 'Dining room', tt: 'Аш бүлмәсе')
+        ),
+        'mdi:baby-face-outline': (
+          'assets/images/rooms/room_kids.png',
+          I18n.t('Детская', 'Пиналъёс комната', 'Kids room',
+              tt: 'Балалар бүлмәсе')
+        ),
+        'mdi:door-open': (
+          'assets/images/rooms/room_entryway.png',
+          I18n.t('Прихожая', 'Азьпал', 'Entryway', tt: 'Керү бүлмәсе')
+        ),
+        'mdi:stairs': (
+          'assets/images/rooms/room_corridor.png',
+          I18n.t('Коридор', 'Коридор', 'Hallway', tt: 'Коридор')
+        ),
+        'mdi:washing-machine': (
+          'assets/images/rooms/room_laundry.png',
+          I18n.t('Прачечная', 'Миськонни', 'Laundry room', tt: 'Кер юу бүлмәсе')
+        ),
+        'mdi:food-apple-outline': (
+          'assets/images/rooms/room_pantry.png',
+          I18n.t('Кладовая', 'Келәт', 'Pantry', tt: 'Келәт')
+        ),
+        'mdi:balcony': (
+          'assets/images/rooms/room_balcony.png',
+          I18n.t('Балкон', 'Балкон', 'Balcony', tt: 'Балкон')
+        ),
+        'mdi:flower-outline': (
+          'assets/images/rooms/room_terrace.png',
+          I18n.t('Терраса', 'Терраса', 'Terrace', tt: 'Терраса')
+        ),
+        'mdi:greenhouse': (
+          'assets/images/rooms/room_garden.png',
+          I18n.t('Сад', 'Бакча', 'Garden', tt: 'Бакча')
+        ),
+        'mdi:home-floor-negative-1': (
+          'assets/images/rooms/room_basement.png',
+          I18n.t('Подвал', 'Улынъёс', 'Basement', tt: 'Подвал')
+        ),
+        'mdi:tools': (
+          'assets/images/rooms/room_workshop.png',
+          I18n.t('Мастерская', 'Ужъянни', 'Workshop', tt: 'Остаханә')
+        ),
+      };
 
   Future<void> save() async {
-    final name = nameController.text.trim();
-    if (name.isEmpty) {
-      setState(() => error = 'Введите название комнаты');
-      return;
-    }
+    final name = icons[icon]!.$2;
     setState(() {
       saving = true;
       error = null;
     });
     try {
-      await widget.onCreate(name, icon);
-      if (mounted) Navigator.of(context).pop(true);
+      final room = await widget.onCreate(name, icon, roomTypeForIcon(icon));
+      if (mounted) Navigator.of(context).pop(room);
     } catch (exception) {
       if (mounted) {
         setState(() {
@@ -1040,17 +1204,6 @@ class _CreateRoomSheetState extends State<_CreateRoomSheet> {
                   'Устройстваосты бере ватсаны луоз.',
                   'You can add devices later.'),
               style: TextStyle(color: _secondary(context), fontSize: 12)),
-          const SizedBox(height: 20),
-          TextField(
-            controller: nameController,
-            autofocus: true,
-            style: TextStyle(color: _foreground(context)),
-            textCapitalization: TextCapitalization.sentences,
-            decoration: _roomInputDecoration(
-                context,
-                I18n.t('Название комнаты', 'Комната ним', 'Room name'),
-                Icons.edit_outlined),
-          ),
           const SizedBox(height: 18),
           Text(I18n.t('Тип комнаты', 'Комната тип', 'Room type'),
               style: TextStyle(
@@ -1065,6 +1218,11 @@ class _CreateRoomSheetState extends State<_CreateRoomSheet> {
             mainAxisSpacing: 10,
             children: icons.entries.map((entry) {
               final active = icon == entry.key;
+              final imagePath = Theme.of(context).brightness == Brightness.dark
+                  ? entry.value.$1
+                  : entry.value.$1.endsWith('.jpg')
+                      ? entry.value.$1.replaceFirst('.jpg', '_light.png')
+                      : entry.value.$1.replaceFirst('.png', '_light.png');
               return InkWell(
                 onTap: () => setState(() => icon = entry.key),
                 borderRadius: BorderRadius.circular(18),
@@ -1081,7 +1239,7 @@ class _CreateRoomSheetState extends State<_CreateRoomSheet> {
                     boxShadow: active
                         ? [
                             BoxShadow(
-                              color: _orange.withValues(alpha: .28),
+                              color: _orange.withOpacity(.28),
                               blurRadius: 14,
                             ),
                           ]
@@ -1090,7 +1248,7 @@ class _CreateRoomSheetState extends State<_CreateRoomSheet> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: Stack(fit: StackFit.expand, children: [
-                      Image.asset(entry.value.$1, fit: BoxFit.cover),
+                      Image.asset(imagePath, fit: BoxFit.cover),
                       const DecoratedBox(
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
@@ -1145,7 +1303,7 @@ class _CreateRoomSheetState extends State<_CreateRoomSheet> {
             onPressed: saving ? null : save,
             style: FilledButton.styleFrom(
               backgroundColor: _orange,
-              disabledBackgroundColor: _orange.withValues(alpha: .35),
+              disabledBackgroundColor: _orange.withOpacity(.35),
               minimumSize: const Size.fromHeight(54),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(18)),
@@ -1164,24 +1322,6 @@ class _CreateRoomSheetState extends State<_CreateRoomSheet> {
     );
   }
 }
-
-InputDecoration _roomInputDecoration(
-        BuildContext context, String hint, IconData icon) =>
-    InputDecoration(
-      hintText: hint,
-      hintStyle: TextStyle(color: _secondary(context)),
-      prefixIcon: Icon(icon, color: _orangeSoft),
-      filled: true,
-      fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: BorderSide(color: Theme.of(context).dividerColor),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: _orange),
-      ),
-    );
 
 class _EmptyPage extends StatelessWidget {
   const _EmptyPage(
@@ -1202,11 +1342,11 @@ class _GlassDock extends StatelessWidget {
   const _GlassDock({
     required this.index,
     required this.onChanged,
-    required this.onAdd,
+    required this.onAssistant,
   });
   final int index;
   final ValueChanged<int> onChanged;
-  final VoidCallback onAdd;
+  final VoidCallback onAssistant;
 
   @override
   Widget build(BuildContext context) {
@@ -1230,7 +1370,7 @@ class _GlassDock extends StatelessWidget {
                 borderRadius: BorderRadius.circular(28),
                 boxShadow: [
                   BoxShadow(
-                    color: _orange.withValues(alpha: .35),
+                    color: _orange.withOpacity(.35),
                     blurRadius: 30,
                     offset: const Offset(0, 14),
                   ),
@@ -1248,7 +1388,7 @@ class _GlassDock extends StatelessWidget {
                         curve: Curves.easeOutCubic,
                         decoration: BoxDecoration(
                           color: selected
-                              ? Colors.white.withValues(alpha: .18)
+                              ? Colors.white.withOpacity(.18)
                               : Colors.transparent,
                           borderRadius: BorderRadius.circular(22),
                           border: selected
@@ -1277,11 +1417,17 @@ class _GlassDock extends StatelessWidget {
             shadowColor: Colors.black54,
             child: InkWell(
               customBorder: const CircleBorder(),
-              onTap: onAdd,
+              onTap: onAssistant,
               child: const SizedBox(
                 width: 68,
                 height: 68,
-                child: Icon(Icons.add_rounded, color: _orange, size: 34),
+                child: Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Image(
+                    image: AssetImage('assets/images/icons/ai_assistant.png'),
+                    fit: BoxFit.contain,
+                  ),
+                ),
               ),
             ),
           ),
@@ -1312,7 +1458,7 @@ class _OrangeIcon extends StatelessWidget {
       width: 42,
       height: 42,
       decoration: BoxDecoration(
-          color: _orange.withValues(alpha: .14),
+          color: _orange.withOpacity(.14),
           borderRadius: BorderRadius.circular(14)),
       child: Icon(icon, color: _orangeSoft, size: 21));
 }
@@ -1354,28 +1500,51 @@ class _Glass extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
-    return Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(24),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
             onTap: onTap,
             child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                decoration: BoxDecoration(
-                    gradient: LinearGradient(colors: [
-                      dark
-                          ? Colors.white.withValues(alpha: .09)
-                          : Colors.white.withValues(alpha: .94),
-                      dark
-                          ? Colors.white.withValues(alpha: .035)
-                          : const Color(0xFFF2F4F7)
-                    ]),
-                    borderRadius: BorderRadius.circular(24),
-                    border: Border.all(
-                        color:
-                            dark ? Colors.white12 : const Color(0xFFE0E4EA))),
-                child: child)));
+              duration: const Duration(milliseconds: 220),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: dark
+                      ? [
+                          Colors.white.withOpacity(.11),
+                          Colors.white.withOpacity(.045),
+                        ]
+                      : [
+                          Colors.white.withOpacity(.76),
+                          Colors.white.withOpacity(.42),
+                        ],
+                ),
+                border: Border.all(
+                  color: dark
+                      ? Colors.white.withOpacity(.13)
+                      : Colors.white.withOpacity(.88),
+                ),
+                boxShadow: dark
+                    ? null
+                    : const [
+                        BoxShadow(
+                          color: Color(0x160E2945),
+                          blurRadius: 22,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
+              ),
+              child: child,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

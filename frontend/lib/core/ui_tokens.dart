@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 
 class UiTokens {
   static const Color accent = Color(0xFFFF7A18);
@@ -34,9 +34,8 @@ class UiTokens {
       _isDark(context) ? borderDark : borderLight;
 
   static List<BoxShadow> cardShadow(BuildContext context) {
-    final color = _isDark(context)
-        ? Colors.black.withValues(alpha: 0.25)
-        : Colors.black12;
+    final color =
+        _isDark(context) ? Colors.black.withOpacity(0.25) : Colors.black12;
     return [
       BoxShadow(
         color: color,

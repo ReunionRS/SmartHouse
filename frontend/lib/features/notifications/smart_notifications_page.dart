@@ -7,7 +7,7 @@ class SmartNotificationsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        backgroundColor: const Color(0xFF0E131B),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
           leading: IconButton(
             onPressed: () => Navigator.pop(context),
@@ -32,10 +32,10 @@ class SmartNotificationsPage extends StatelessWidget {
                   width: 76,
                   height: 76,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFF7A18).withValues(alpha: .12),
+                    color: const Color(0xFFFF7A18).withOpacity(.12),
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: const Color(0xFFFF8A2A).withValues(alpha: .22),
+                      color: const Color(0xFFFF8A2A).withOpacity(.22),
                     ),
                   ),
                   child: const Icon(
@@ -49,8 +49,8 @@ class SmartNotificationsPage extends StatelessWidget {
                   I18n.t('Уведомлений пока нет', 'Иворъёс али ӧвӧл',
                       'No notifications yet'),
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Color(0xFFFFF7EF),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
                   ),
@@ -63,8 +63,8 @@ class SmartNotificationsPage extends StatelessWidget {
                     'Device events, sensor alerts and important home messages will appear here.',
                   ),
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Color(0xFFA99D93),
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                     fontSize: 13,
                     height: 1.45,
                   ),

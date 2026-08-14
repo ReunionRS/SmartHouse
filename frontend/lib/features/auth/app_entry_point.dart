@@ -18,6 +18,8 @@ class AppEntryPoint extends StatefulWidget {
     this.externalSession,
     required this.isDarkMode,
     required this.onToggleTheme,
+    required this.themeMode,
+    required this.onThemeModeChanged,
     required this.language,
     required this.onLanguageChanged,
   });
@@ -25,6 +27,8 @@ class AppEntryPoint extends StatefulWidget {
   final ValueNotifier<AppSession?>? externalSession;
   final bool isDarkMode;
   final VoidCallback onToggleTheme;
+  final ThemeMode themeMode;
+  final Future<void> Function(ThemeMode mode) onThemeModeChanged;
   final AppLanguage language;
   final Future<void> Function(AppLanguage language) onLanguageChanged;
 
@@ -233,6 +237,8 @@ class _AppEntryPointState extends State<AppEntryPoint> {
         onLogout: _logout,
         isDarkMode: widget.isDarkMode,
         onToggleTheme: widget.onToggleTheme,
+        themeMode: widget.themeMode,
+        onThemeModeChanged: widget.onThemeModeChanged,
         language: widget.language,
         onLanguageChanged: widget.onLanguageChanged,
       );

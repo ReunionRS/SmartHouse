@@ -6,6 +6,46 @@ import '../../core/i18n.dart';
 import '../../services/auth_service.dart';
 import '../../services/biometric_service.dart';
 
+class ThemeSettingsPage extends StatelessWidget {
+  const ThemeSettingsPage({
+    super.key,
+    required this.themeMode,
+    required this.onChanged,
+  });
+
+  final ThemeMode themeMode;
+  final Future<void> Function(ThemeMode) onChanged;
+
+  @override
+  Widget build(BuildContext context) => _SettingsScaffold(
+        title: I18n.t('Тема', 'Тема', 'Theme'),
+        children: [
+          _SettingsCard(
+            child: Column(
+              children: ThemeMode.values.map((mode) {
+                final title = switch (mode) {
+                  ThemeMode.system => I18n.t('Системная', 'Система', 'System'),
+                  ThemeMode.light => I18n.t('Светлая', 'Югыт', 'Light'),
+                  ThemeMode.dark => I18n.t('Тёмная', 'Пеймыт', 'Dark'),
+                };
+                return RadioListTile<ThemeMode>(
+                  value: mode,
+                  groupValue: themeMode,
+                  activeColor: const Color(0xFFFF7A18),
+                  title: Text(title),
+                  onChanged: (value) async {
+                    if (value == null) return;
+                    await onChanged(value);
+                    if (context.mounted) Navigator.pop(context);
+                  },
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      );
+}
+
 class LanguageSettingsPage extends StatelessWidget {
   const LanguageSettingsPage({
     super.key,
@@ -21,7 +61,7 @@ class LanguageSettingsPage extends StatelessWidget {
         children: [
           _SettingsCard(
             child: Column(
-              children: AppLanguage.values.map((item) {
+              children: AppLanguage.available.map((item) {
                 return RadioListTile<AppLanguage>(
                   value: item,
                   groupValue: language,

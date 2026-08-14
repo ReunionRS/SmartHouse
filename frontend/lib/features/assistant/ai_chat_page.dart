@@ -1,0 +1,671 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../core/ui_tokens.dart';
+import '../../services/ai_assistant_service.dart';
+
+class AiChatSheet extends StatefulWidget {
+  const AiChatSheet({super.key});
+
+  @override
+  State<AiChatSheet> createState() => _AiChatSheetState();
+}
+
+class _AiChatSheetState extends State<AiChatSheet> {
+  final controller = TextEditingController();
+  final service = AiAssistantService();
+  final messages = <({String text, bool assistant})>[];
+  String? conversationId;
+  bool sending = false;
+  String responseType = 'text';
+  Map<String, dynamic>? responseData;
+  bool actionProcessing = false;
+  Timer? statusTimer;
+  List<String> activeStatuses = const ['Обрабатываю запрос…'];
+  int statusIndex = 0;
+
+  static const questions = [
+    'Что происходит дома?',
+    'Почему в спальне холодно?',
+    'У каких устройств низкий заряд?',
+    'Сколько энергии потрачено сегодня?',
+  ];
+
+  @override
+  void dispose() {
+    statusTimer?.cancel();
+    controller.dispose();
+    super.dispose();
+  }
+
+  List<String> statusesFor(String text) {
+    final query = text.toLowerCase();
+    if (query.contains('погод') ||
+        query.contains('прогноз') ||
+        query.contains('температура на улице')) {
+      return const [
+        'Определяю город…',
+        'Получаю данные метеослужбы…',
+        'Проверяю актуальный прогноз…',
+      ];
+    }
+    if (query.contains('энерг') || query.contains('электр')) {
+      return const [
+        'Связываюсь со Smart Hub…',
+        'Ищу счётчики энергии…',
+        'Анализирую энергопотребление…',
+      ];
+    }
+    if (query.contains('почему') ||
+        query.contains('истори') ||
+        query.contains('происходило')) {
+      return const [
+        'Связываюсь со Smart Hub…',
+        'Проверяю базу Smart Hub…',
+        'Смотрю историю Home Assistant…',
+        'Сопоставляю события…',
+      ];
+    }
+    if (query.contains('автоматизац') || query.contains('сценар')) {
+      return const [
+        'Проверяю устройства и комнаты…',
+        'Проверяю совместимость действий…',
+        'Подготавливаю автоматизацию…',
+      ];
+    }
+    if (query.contains('включ') ||
+        query.contains('выключ') ||
+        query.contains('установ') ||
+        query.contains('открой') ||
+        query.contains('закрой')) {
+      return const [
+        'Ищу устройство в Smart Hub…',
+        'Проверяю доступность устройства…',
+        'Подготавливаю безопасное действие…',
+      ];
+    }
+    return const [
+      'Связываюсь со Smart Hub…',
+      'Проверяю данные Home Assistant…',
+      'Анализирую состояние дома…',
+    ];
+  }
+
+  void startStatuses(String text) {
+    statusTimer?.cancel();
+    activeStatuses = statusesFor(text);
+    statusIndex = 0;
+    statusTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (!mounted || !sending) return;
+      setState(() => statusIndex = (statusIndex + 1) % activeStatuses.length);
+    });
+  }
+
+  Future<void> send([String? value]) async {
+    final text = (value ?? controller.text).trim();
+    if (text.isEmpty || sending) return;
+    controller.clear();
+    startStatuses(text);
+    setState(() {
+      sending = true;
+      messages.add((text: text, assistant: false));
+    });
+    try {
+      final response =
+          await service.send(message: text, conversationId: conversationId);
+      if (!mounted) return;
+      setState(() {
+        conversationId = response.conversationId;
+        responseType = response.type;
+        responseData = response.data;
+        messages.add((text: response.message, assistant: true));
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => messages.add((
+            text: error.toString().replaceFirst('Exception: ', ''),
+            assistant: true
+          )));
+    } finally {
+      statusTimer?.cancel();
+      if (mounted) setState(() => sending = false);
+    }
+  }
+
+  Future<void> confirmAction() async {
+    final id = (responseData?['id'] ?? '').toString();
+    if (id.isEmpty || actionProcessing) return;
+    setState(() => actionProcessing = true);
+    try {
+      final text = await service.confirmAction(id);
+      if (!mounted) return;
+      setState(() {
+        responseType = 'text';
+        responseData = null;
+        messages.add((text: text, assistant: true));
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => messages.add((
+              text: error.toString().replaceFirst('Exception: ', ''),
+              assistant: true,
+            )));
+      }
+    } finally {
+      if (mounted) setState(() => actionProcessing = false);
+    }
+  }
+
+  Future<void> cancelAction() async {
+    final id = (responseData?['id'] ?? '').toString();
+    if (id.isEmpty || actionProcessing) return;
+    setState(() => actionProcessing = true);
+    try {
+      await service.cancelAction(id);
+      if (!mounted) return;
+      setState(() {
+        responseType = 'text';
+        responseData = null;
+        messages.add((text: 'Действие отменено.', assistant: true));
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => messages.add((
+              text: error.toString().replaceFirst('Exception: ', ''),
+              assistant: true,
+            )));
+      }
+    } finally {
+      if (mounted) setState(() => actionProcessing = false);
+    }
+  }
+
+  Future<void> createAutomation() async {
+    final draft = responseData;
+    if (draft == null || actionProcessing) return;
+    setState(() => actionProcessing = true);
+    try {
+      final text = await service.createAutomation(draft);
+      if (!mounted) return;
+      setState(() {
+        responseType = 'text';
+        responseData = null;
+        messages.add((text: text, assistant: true));
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => messages.add((
+              text: error.toString().replaceFirst('Exception: ', ''),
+              assistant: true,
+            )));
+      }
+    } finally {
+      if (mounted) setState(() => actionProcessing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final sheetColor = dark ? const Color(0xFF151A22) : const Color(0xFFF4F4F5);
+    final cardColor = dark ? const Color(0xFF222832) : Colors.white;
+    final inputColor = dark ? const Color(0xFF252C36) : const Color(0xFFE8E8EA);
+    final primaryText =
+        dark ? const Color(0xFFF5F2EE) : const Color(0xFF29292D);
+    final secondaryText =
+        dark ? const Color(0xFFAEB4BE) : const Color(0xFF77777C);
+    return Container(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * .72,
+      ),
+      padding: EdgeInsets.fromLTRB(20, 8, 20, 16 + keyboard),
+      decoration: BoxDecoration(
+        color: sheetColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          width: 44,
+          height: 5,
+          decoration: BoxDecoration(
+            color: dark ? const Color(0xFF59616D) : const Color(0xFFC7C7C9),
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        const SizedBox(height: 13),
+        Row(children: [
+          const _AssistantMark(),
+          const SizedBox(width: 12),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('SmartHouse Assistant',
+                  style: TextStyle(
+                      color: primaryText,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 3),
+              Text('Спросите о вашем доме…',
+                  style: TextStyle(color: secondaryText, fontSize: 12)),
+            ]),
+          ),
+        ]),
+        const SizedBox(height: 14),
+        Flexible(
+          child: SingleChildScrollView(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: dark
+                          ? const Color(0x33000000)
+                          : const Color(0x17000000),
+                      blurRadius: 24,
+                      offset: const Offset(0, 9),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  'Я получаю актуальные данные напрямую с вашего локального Home Assistant. Спросите, что сейчас происходит дома.',
+                  style: TextStyle(
+                    color: primaryText,
+                    fontSize: 13,
+                    height: 1.55,
+                  ),
+                ),
+              ),
+              if (messages.isEmpty) ...[
+                const SizedBox(height: 17),
+                Text('Попробуйте спросить',
+                    style: TextStyle(color: secondaryText, fontSize: 12)),
+                const SizedBox(height: 9),
+                Wrap(
+                  spacing: 7,
+                  runSpacing: 7,
+                  children: questions
+                      .map((text) => ActionChip(
+                            label: Text(text),
+                            labelStyle:
+                                TextStyle(color: primaryText, fontSize: 12),
+                            backgroundColor: cardColor,
+                            side: BorderSide.none,
+                            shape: const StadiumBorder(),
+                            onPressed: () => send(text),
+                          ))
+                      .toList(),
+                ),
+              ] else ...[
+                const SizedBox(height: 14),
+                ...messages.map((item) => Align(
+                      alignment: item.assistant
+                          ? Alignment.centerLeft
+                          : Alignment.centerRight,
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: item.assistant ? cardColor : UiTokens.accent,
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: item.assistant
+                            ? _AssistantMarkdown(
+                                data: item.text,
+                                color: primaryText,
+                              )
+                            : Text(
+                                item.text,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
+                              ),
+                      ),
+                    )),
+                if (responseData != null && responseType != 'text')
+                  _AiDataCard(
+                    type: responseType,
+                    data: responseData!,
+                    processing: actionProcessing,
+                    onConfirm: responseType == 'automation_draft'
+                        ? createAutomation
+                        : confirmAction,
+                    onCancel: cancelAction,
+                  ),
+                if (sending)
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(children: [
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 10),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        child: Text(
+                          activeStatuses[statusIndex],
+                          key: ValueKey(statusIndex),
+                        ),
+                      ),
+                    ]),
+                  ),
+              ],
+            ]),
+          ),
+        ),
+        const SizedBox(height: 13),
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 5, 6, 5),
+          decoration: BoxDecoration(
+            color: inputColor,
+            borderRadius: BorderRadius.circular(19),
+          ),
+          child: Row(children: [
+            Expanded(
+              child: TextField(
+                controller: controller,
+                minLines: 1,
+                maxLines: 3,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => send(),
+                style: TextStyle(color: primaryText, fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'Спросите о вашем доме…',
+                  hintStyle: TextStyle(color: secondaryText),
+                  filled: false,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  disabledBorder: InputBorder.none,
+                  errorBorder: InputBorder.none,
+                  focusedErrorBorder: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 11),
+                  isDense: true,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              onPressed: sending ? null : send,
+              style: IconButton.styleFrom(
+                backgroundColor: UiTokens.accent,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.arrow_upward_rounded, size: 19),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+class _AssistantMarkdown extends StatelessWidget {
+  const _AssistantMarkdown({required this.data, required this.color});
+
+  final String data;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final secondary = Theme.of(context).colorScheme.onSurfaceVariant;
+    final codeBackground = Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFF20262F)
+        : const Color(0xFFF0F1F3);
+    final safeData = data.replaceAllMapped(
+      RegExp(r'!\[([^\]]*)\]\([^)]+\)'),
+      (match) => match.group(1)?.trim().isNotEmpty == true
+          ? '_${match.group(1)}_'
+          : '_Изображение_',
+    );
+
+    return MarkdownBody(
+      data: safeData,
+      selectable: true,
+      softLineBreak: true,
+      styleSheet: MarkdownStyleSheet(
+        p: TextStyle(color: color, fontSize: 13, height: 1.42),
+        strong: TextStyle(
+          color: color,
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
+        em: TextStyle(
+          color: color,
+          fontSize: 13,
+          fontStyle: FontStyle.italic,
+        ),
+        h1: TextStyle(color: color, fontSize: 19, fontWeight: FontWeight.w800),
+        h2: TextStyle(color: color, fontSize: 17, fontWeight: FontWeight.w800),
+        h3: TextStyle(color: color, fontSize: 15, fontWeight: FontWeight.w700),
+        listBullet: const TextStyle(color: UiTokens.accent, fontSize: 14),
+        a: const TextStyle(
+          color: UiTokens.accent,
+          decoration: TextDecoration.underline,
+          decorationColor: UiTokens.accent,
+        ),
+        blockquote: TextStyle(color: secondary, fontSize: 13, height: 1.4),
+        blockquoteDecoration: BoxDecoration(
+          color: UiTokens.accent.withOpacity(.08),
+          border:
+              const Border(left: BorderSide(color: UiTokens.accent, width: 3)),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        code: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontFamily: 'monospace',
+          backgroundColor: codeBackground,
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: codeBackground,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        codeblockPadding: const EdgeInsets.all(10),
+        horizontalRuleDecoration: BoxDecoration(
+          border:
+              Border(top: BorderSide(color: Theme.of(context).dividerColor)),
+        ),
+      ),
+      onTapLink: (_, href, __) async {
+        final uri = Uri.tryParse(href ?? '');
+        if (uri == null || !const {'http', 'https'}.contains(uri.scheme)) {
+          return;
+        }
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      },
+    );
+  }
+}
+
+class _AiDataCard extends StatelessWidget {
+  const _AiDataCard({
+    required this.type,
+    required this.data,
+    required this.processing,
+    required this.onConfirm,
+    required this.onCancel,
+  });
+
+  final String type;
+  final Map<String, dynamic> data;
+  final bool processing;
+  final VoidCallback onConfirm;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    if (type == 'confirmation') {
+      return _card(
+        context,
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Требуется подтверждение',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+          const SizedBox(height: 6),
+          Text(_actionTitle((data['action'] ?? '').toString())),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: processing ? null : onCancel,
+                child: const Text('Отмена'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton(
+                onPressed: processing ? null : onConfirm,
+                child: processing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Подтвердить'),
+              ),
+            ),
+          ]),
+        ]),
+      );
+    }
+    if (type == 'automation_draft') {
+      return _card(
+        context,
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Черновик автоматизации',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+          const SizedBox(height: 7),
+          Text((data['name'] ?? 'Без названия').toString()),
+          const SizedBox(height: 4),
+          Text((data['description'] ?? '').toString(),
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12)),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: processing ? null : onConfirm,
+              icon: processing
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add_task_rounded),
+              label: const Text('Создать в Home Assistant'),
+            ),
+          ),
+        ]),
+      );
+    }
+    if (type == 'home_summary') {
+      final temperature = data['temperature'];
+      final humidity = data['humidity'];
+      final lights = data['lights'];
+      final openings = data['openings'];
+      return _card(
+        context,
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          _metric(
+              context,
+              Icons.thermostat_rounded,
+              temperature is Map
+                  ? '${temperature['average']} °C'
+                  : 'Нет данных'),
+          _metric(context, Icons.water_drop_outlined,
+              humidity is Map ? '${humidity['average']}%' : 'Нет данных'),
+          _metric(
+              context,
+              Icons.lightbulb_outline_rounded,
+              lights is Map
+                  ? '${lights['on']} из ${lights['total']}'
+                  : 'Нет данных'),
+          _metric(
+              context,
+              Icons.sensor_door_outlined,
+              openings is Map && openings['open'] is List
+                  ? 'Открыто: ${(openings['open'] as List).length}'
+                  : 'Нет данных'),
+          _metric(context, Icons.warning_amber_rounded,
+              'Недоступно: ${data['unavailable_devices'] ?? 0}'),
+        ]),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _card(BuildContext context, Widget child) => Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Theme.of(context).brightness == Brightness.dark
+              ? const Color(0xFF222832)
+              : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Theme.of(context).dividerColor),
+        ),
+        child: child,
+      );
+
+  Widget _metric(BuildContext context, IconData icon, String value) =>
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).brightness == Brightness.dark
+              ? const Color(0xFF2B333E)
+              : const Color(0xFFF1F1F3),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 16, color: UiTokens.accent),
+          const SizedBox(width: 5),
+          Text(value, style: const TextStyle(fontSize: 12)),
+        ]),
+      );
+
+  String _actionTitle(String action) => switch (action) {
+        'set_climate_temperature' => 'Изменить температуру',
+        'open_cover' => 'Открыть шторы',
+        'close_cover' => 'Закрыть шторы',
+        _ => 'Выполнить действие',
+      };
+}
+
+class _AssistantMark extends StatelessWidget {
+  const _AssistantMark();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 45,
+        height: 45,
+        padding: const EdgeInsets.all(9),
+        decoration: BoxDecoration(
+          color: UiTokens.accent,
+          borderRadius: BorderRadius.circular(13),
+          boxShadow: [
+            BoxShadow(
+              color: UiTokens.accent.withOpacity(.28),
+              blurRadius: 15,
+            ),
+          ],
+        ),
+        child: Image.asset(
+          'assets/images/icons/ai_assistant.png',
+          color: Colors.white,
+        ),
+      );
+}

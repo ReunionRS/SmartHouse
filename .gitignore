@@ -13,6 +13,10 @@ frontend/tmp/
 backend/coverage/
 *.log
 
+# Local UI comparison screenshots.
+frontend/ha_contrast.png
+frontend/onboarding_*.png
+
 # Environment-specific Firebase client configuration.
 frontend/android/app/google-services.json
 frontend/ios/Runner/GoogleService-Info.plist

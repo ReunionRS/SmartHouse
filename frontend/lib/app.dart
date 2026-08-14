@@ -21,15 +21,19 @@ class SmartHouseApp extends StatefulWidget {
 
 class _SmartHouseAppState extends State<SmartHouseApp> {
   static const _languageKey = 'app_language';
+  static const _themeKey = 'app_theme_mode';
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   final GlobalKey _appEntryKey = GlobalKey();
   final ValueNotifier<AppSession?> _pendingExternalSession =
       ValueNotifier(null);
   final AppLinks _appLinks = AppLinks();
   AppLanguage _language = AppLanguage.ru;
+  ThemeMode _themeMode = ThemeMode.system;
   bool _bootstrapped = false;
 
-  bool get _isDark => true;
+  bool get _isDark =>
+      WidgetsBinding.instance.platformDispatcher.platformBrightness ==
+      Brightness.dark;
 
   @override
   void initState() {
@@ -86,15 +90,28 @@ class _SmartHouseAppState extends State<SmartHouseApp> {
   Future<void> _loadPreferences() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_languageKey) ?? 'ru';
+    final themeRaw = prefs.getString(_themeKey) ?? ThemeMode.system.name;
     if (!mounted) return;
     setState(() {
       _language = AppLanguage.fromCode(raw);
+      _themeMode = ThemeMode.values.firstWhere(
+        (mode) => mode.name == themeRaw,
+        orElse: () => ThemeMode.system,
+      );
       _bootstrapped = true;
     });
     AppLanguageStore.set(_language);
   }
 
   void _toggleTheme() {}
+
+  Future<void> _setThemeMode(ThemeMode mode) async {
+    if (_themeMode == mode) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_themeKey, mode.name);
+    if (!mounted) return;
+    setState(() => _themeMode = mode);
+  }
 
   Future<void> _setLanguage(AppLanguage language) async {
     if (_language == language) return;
@@ -211,6 +228,76 @@ class _SmartHouseAppState extends State<SmartHouseApp> {
     );
   }
 
+  ThemeData _buildLightTheme() {
+    const primary = UiTokens.accent;
+    final scheme = ColorScheme.fromSeed(
+      seedColor: primary,
+      brightness: Brightness.light,
+    );
+    final baseText = _withFallback(
+      GoogleFonts.dmSansTextTheme(ThemeData.light().textTheme),
+    );
+    return ThemeData(
+      useMaterial3: true,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+          TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+        },
+      ),
+      colorScheme: scheme.copyWith(
+        primary: primary,
+        secondary: primary,
+        surface: Colors.white.withOpacity(.78),
+      ),
+      scaffoldBackgroundColor: UiTokens.backgroundLight,
+      cardTheme: CardTheme(
+        color: Colors.white.withOpacity(.72),
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      ),
+      appBarTheme: const AppBarTheme(
+        centerTitle: false,
+        elevation: 0,
+        foregroundColor: UiTokens.foregroundLight,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.white.withOpacity(.68),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: Color(0x66FFFFFF)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: primary, width: 1.5),
+        ),
+      ),
+      dividerColor: UiTokens.borderLight,
+      textTheme: _withFallback(baseText.copyWith(
+        titleLarge: GoogleFonts.spaceGrotesk(
+          fontSize: 22,
+          fontWeight: FontWeight.w700,
+          textStyle: const TextStyle(fontFamilyFallback: _fontFallback),
+        ),
+        titleMedium: GoogleFonts.spaceGrotesk(
+          fontSize: 16,
+          fontWeight: FontWeight.w600,
+          textStyle: const TextStyle(fontFamilyFallback: _fontFallback),
+        ),
+      )),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_bootstrapped) {
@@ -235,9 +322,9 @@ class _SmartHouseAppState extends State<SmartHouseApp> {
       navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'Smart House',
-      theme: _buildDarkTheme(),
+      theme: _buildLightTheme(),
       darkTheme: _buildDarkTheme(),
-      themeMode: ThemeMode.dark,
+      themeMode: _themeMode,
       locale: _language.locale,
       supportedLocales: const [
         Locale('ru'),
@@ -253,6 +340,8 @@ class _SmartHouseAppState extends State<SmartHouseApp> {
         externalSession: _pendingExternalSession,
         isDarkMode: _isDark,
         onToggleTheme: _toggleTheme,
+        themeMode: _themeMode,
+        onThemeModeChanged: _setThemeMode,
         language: _language,
         onLanguageChanged: _setLanguage,
       ),

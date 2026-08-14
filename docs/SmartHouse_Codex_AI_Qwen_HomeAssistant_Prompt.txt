@@ -1,0 +1,1192 @@
+Ты — senior backend/AI engineer и архитектор интеграций. Твоя задача — реализовать в проекте SmartHouse AI-ассистента на базе Qwen2.5, который получает актуальные данные из Home Assistant, умеет отвечать на вопросы пользователя о состоянии дома, выполнять разрешённые команды через контролируемый backend tool-layer и создавать предложения для автоматизаций.
+
+ВАЖНО:
+- Не давай Qwen прямой неограниченный доступ к Home Assistant.
+- Все обращения к Home Assistant должны идти через backend и строго типизированный слой инструментов.
+- Модель не должна выдумывать состояние дома.
+- Если данных недостаточно — модель обязана запросить их через tools.
+- Любые потенциально опасные действия должны требовать подтверждения пользователя.
+- Реализация должна быть пригодна для дальнейшего подключения Flutter-клиента.
+- Используй существующую архитектуру проекта, не переписывай всё без необходимости.
+- Перед изменением кода сначала проанализируй структуру репозитория, существующие backend-модули, Home Assistant integration, auth, websocket, entities, rooms и API.
+- Не удаляй уже работающий функционал.
+- Если в проекте уже есть похожие классы/services/repositories/controllers — переиспользуй их.
+
+==================================================
+1. ЦЕЛЬ
+==================================================
+
+Нужно добавить SmartHouse AI Assistant.
+
+Ассистент должен уметь:
+
+1. Отвечать на вопросы о текущем состоянии дома.
+2. Получать данные из Home Assistant.
+3. Получать историю устройств и датчиков.
+4. Анализировать причины проблем.
+5. Показывать состояние комнат.
+6. Показывать включённые устройства.
+7. Показывать открытые двери/окна.
+8. Показывать температуру и влажность.
+9. Показывать устройства с низким зарядом батареи.
+10. Показывать недоступные устройства.
+11. Показывать энергопотребление, если такие entities существуют.
+12. Выполнять безопасные команды управления.
+13. Создавать черновик автоматизации по естественному языку.
+14. Создавать черновик сцены.
+15. Давать краткую AI-сводку дома.
+16. Объяснять "почему" на основе истории и событий.
+17. Никогда не утверждать состояние устройства, если оно не было получено из HA.
+
+Примеры пользовательских запросов:
+
+"Что сейчас происходит дома?"
+"Какая температура в спальне?"
+"Где включён свет?"
+"Есть ли открытые окна?"
+"Какие датчики скоро разрядятся?"
+"Почему ночью было холодно в спальне?"
+"Почему лампа на кухне недоступна?"
+"Выключи свет на кухне."
+"Выключи весь свет кроме спальни."
+"Поставь свет в гостиной на 30%."
+"Сделай свет в гостиной тёплым."
+"Запусти сцену Кино."
+"Создай автоматизацию: после 23:00 при движении в коридоре включать свет на 20% на две минуты."
+"Что происходило дома, пока меня не было?"
+
+==================================================
+2. ОБЩАЯ АРХИТЕКТУРА
+==================================================
+
+Использовать следующую схему:
+
+Flutter SmartHouse
+        |
+        v
+SmartHouse Backend API
+        |
+        v
+AI Orchestrator
+   |            |
+   v            v
+Qwen2.5      HA Tool Layer
+                  |
+                  v
+          Home Assistant
+       REST API + WebSocket
+
+Qwen2.5:
+- понимает естественный язык;
+- выбирает нужный tool;
+- анализирует результаты;
+- формирует человеческий ответ;
+- создаёт структурированные предложения автоматизаций.
+
+Backend:
+- хранит connection/auth к HA;
+- проверяет права пользователя;
+- нормализует entities;
+- вызывает Home Assistant;
+- валидирует tool arguments;
+- подтверждает результат действия;
+- не даёт модели выполнять произвольные HA service calls.
+
+==================================================
+3. QWEN
+==================================================
+
+Базовая модель:
+Qwen2.5-7B-Instruct
+
+Сделай abstraction, чтобы модель позже можно было заменить, например:
+- Qwen2.5-14B-Instruct
+- локальный Ollama
+- vLLM
+- OpenAI-compatible API
+- llama.cpp server
+- другой LLM provider
+
+Создай интерфейс вида:
+
+LLMProvider
+- chat(...)
+- chatWithTools(...)
+- streamChat(...)
+- healthCheck(...)
+
+Не привязывай бизнес-логику напрямую к конкретному API Qwen.
+
+Если проект уже использует AI provider abstraction — расширить её.
+
+==================================================
+4. AI ORCHESTRATOR
+==================================================
+
+Создай отдельный модуль AI Orchestrator.
+
+Примерная ответственность:
+
+AiAssistantService
+AiConversationService
+AiToolRegistry
+AiToolExecutor
+AiSafetyService
+AiContextService
+AiResponseFormatter
+
+AiAssistantService должен:
+1. принять user message;
+2. определить контекст пользователя и дома;
+3. отправить сообщение в Qwen;
+4. позволить модели вызвать разрешённые tools;
+5. выполнить tool через backend;
+6. вернуть tool result обратно модели;
+7. повторять цикл до получения final answer;
+8. ограничить число tool iterations;
+9. вернуть структурированный ответ Flutter-клиенту.
+
+Ограничение:
+max tool rounds = 5-8.
+
+Добавить timeout.
+
+Добавить обработку ошибок.
+
+==================================================
+5. TOOL LAYER
+==================================================
+
+Не давать модели raw Home Assistant REST API.
+
+Создать строго ограниченные tools.
+
+Минимальный список:
+
+get_home_summary()
+get_rooms()
+get_room_state(room_id)
+get_devices()
+get_devices_by_room(room_id)
+get_devices_by_domain(domain)
+get_device_state(device_id)
+get_device_history(device_id, from, to)
+get_room_history(room_id, from, to)
+get_recent_events(period)
+get_openings_state()
+get_lights_state()
+get_climate_state()
+get_low_battery_devices(threshold)
+get_unavailable_devices()
+get_energy_summary(period)
+
+Управление:
+
+turn_on_device(device_id)
+turn_off_device(device_id)
+set_light_brightness(device_id, brightness_percent)
+set_light_color_temperature(device_id, kelvin)
+set_light_rgb(device_id, r, g, b)
+set_climate_temperature(device_id, temperature)
+open_cover(device_id)
+close_cover(device_id)
+run_scene(scene_id)
+
+Автоматизации:
+
+prepare_automation_draft(...)
+validate_automation_draft(...)
+create_automation_after_confirmation(...)
+
+Сцены:
+
+prepare_scene_draft(...)
+create_scene_after_confirmation(...)
+
+Если HA API не позволяет безопасно создать automation через текущую интеграцию — сначала создать только draft и вернуть его клиенту.
+
+==================================================
+6. НОРМАЛИЗАЦИЯ HOME ASSISTANT
+==================================================
+
+Нельзя передавать Qwen весь state Home Assistant без фильтрации.
+
+Создай слой нормализации:
+
+HomeAssistantEntityMapper
+HomeAssistantRoomMapper
+HomeAssistantDeviceMapper
+
+Модель должна видеть нормальные имена:
+
+ПЛОХО:
+light.living_room_main
+binary_sensor.front_door_contact
+sensor.aqara_temp_01_temperature
+
+ХОРОШО:
+"Основной свет"
+"Входная дверь"
+"Температура"
+
+Каждый normalized device должен иметь примерно:
+
+{
+  "id": "...",
+  "entity_id": "...",
+  "name": "...",
+  "room_id": "...",
+  "room_name": "...",
+  "domain": "...",
+  "state": "...",
+  "available": true,
+  "attributes": {},
+  "capabilities": [],
+  "last_changed": "...",
+  "last_updated": "..."
+}
+
+Не отправлять лишние атрибуты.
+
+Сделать whitelist полезных attributes по domain.
+
+==================================================
+7. HOME SUMMARY
+==================================================
+
+get_home_summary должен возвращать компактное структурированное состояние.
+
+Пример:
+
+{
+  "home_status": "ok",
+  "temperature": {
+    "average": 22.4,
+    "min": 20.8,
+    "max": 23.1
+  },
+  "humidity": {
+    "average": 46
+  },
+  "lights": {
+    "on": 3,
+    "total": 12
+  },
+  "openings": {
+    "open": [
+      {
+        "name": "Окно кухни",
+        "room": "Кухня"
+      }
+    ]
+  },
+  "low_battery": [
+    {
+      "name": "Датчик ванной",
+      "battery": 12
+    }
+  ],
+  "unavailable_devices": 1,
+  "hub_online": true,
+  "home_assistant_online": true
+}
+
+AI использует эти данные для ответа:
+
+"Дома всё в целом нормально. Температура около 22,4 °C. Включены 3 источника света. На кухне открыто окно. У датчика ванной осталось 12% батареи."
+
+==================================================
+8. ИСТОРИЯ И ДИАГНОСТИКА
+==================================================
+
+Нужно поддержать вопросы вида:
+
+"Почему ночью было холодно?"
+"Почему устройство перестало отвечать?"
+"Почему быстро разряжается батарея?"
+
+Создать diagnostic flow.
+
+Например для:
+"Почему ночью было холодно в спальне?"
+
+Модель может запросить:
+get_room_history("bedroom", ...)
+get_device_history(window_sensor, ...)
+get_device_history(thermostat, ...)
+
+Backend должен вернуть компактный chronological dataset.
+
+Пример:
+
+{
+  "period": "...",
+  "events": [
+    {
+      "time": "02:13",
+      "type": "window_open",
+      "device": "Окно спальни"
+    },
+    {
+      "time": "02:15",
+      "type": "temperature",
+      "value": 21.1
+    },
+    {
+      "time": "02:40",
+      "type": "temperature",
+      "value": 19.4
+    },
+    {
+      "time": "02:51",
+      "type": "window_closed"
+    }
+  ]
+}
+
+Модель должна отделять:
+- факт;
+- вероятную причину;
+- предположение.
+
+Не писать "причина точно такая", если это только корреляция.
+
+==================================================
+9. ВЫПОЛНЕНИЕ КОМАНД
+==================================================
+
+Команды пользователя должны выполняться через backend.
+
+Пример:
+
+User:
+"Выключи свет на кухне"
+
+Qwen выбирает:
+turn_off_device(...)
+
+Backend:
+1. resolve friendly name -> internal device/entity;
+2. проверяет, что entity существует;
+3. проверяет права пользователя;
+4. проверяет, что action разрешён;
+5. вызывает HA;
+6. получает/ждёт подтверждение state через REST/WebSocket;
+7. возвращает result модели.
+
+Tool result:
+
+{
+  "success": true,
+  "device": "Свет на кухне",
+  "new_state": "off"
+}
+
+Только после этого Qwen отвечает:
+"Свет на кухне выключен."
+
+Если HA не подтвердил state:
+"Команда отправлена, но Home Assistant пока не подтвердил новое состояние."
+
+==================================================
+10. УРОВНИ РИСКА
+==================================================
+
+Добавить action safety classification.
+
+LOW RISK:
+- light on/off;
+- brightness;
+- RGB;
+- обычные media actions;
+- запуск обычной scene;
+- безопасная smart plug, если устройство не помечено critical.
+
+MEDIUM:
+- climate temperature;
+- covers;
+- некоторые power devices.
+
+HIGH:
+- door locks;
+- security/alarm;
+- гаражные ворота;
+- удаление автоматизаций;
+- критические реле;
+- потенциально опасные устройства.
+
+High-risk action не выполнять сразу.
+
+Tool должен вернуть:
+
+{
+  "requires_confirmation": true,
+  "confirmation_id": "...",
+  "action": {
+    ...
+  }
+}
+
+Flutter показывает подтверждение.
+
+После явного подтверждения пользователя:
+POST /ai/confirm-action/:id
+
+Только после этого backend выполняет действие.
+
+Никогда не доверять строке "да" внутри самой модели без backend confirmation token.
+
+==================================================
+11. AUTOMATION BUILDER
+==================================================
+
+Нужно реализовать генерацию automation draft.
+
+Пользователь:
+
+"После 23:00 при движении в коридоре включать свет на 20% на две минуты."
+
+Qwen должен сформировать структурированный draft:
+
+{
+  "name": "Ночной свет в коридоре",
+  "trigger": [
+    {
+      "type": "motion",
+      "device_id": "...",
+      "room_id": "hallway"
+    }
+  ],
+  "conditions": [
+    {
+      "type": "time_range",
+      "after": "23:00",
+      "before": "07:00"
+    }
+  ],
+  "actions": [
+    {
+      "type": "light_on",
+      "device_id": "...",
+      "brightness": 20
+    },
+    {
+      "type": "delay",
+      "seconds": 120
+    },
+    {
+      "type": "light_off",
+      "device_id": "..."
+    }
+  ]
+}
+
+Backend обязан:
+- проверить device IDs;
+- проверить capabilities;
+- проверить диапазоны;
+- проверить время;
+- проверить unsupported actions.
+
+Qwen не должен самостоятельно сохранять automation.
+
+Сначала Flutter показывает пользователю draft.
+
+Кнопка:
+"Создать автоматизацию"
+
+После подтверждения backend создаёт automation.
+
+==================================================
+12. AI SYSTEM PROMPT
+==================================================
+
+Создать отдельный system prompt файл.
+
+Например:
+src/ai/prompts/smart-house-assistant.txt
+
+Основные правила system prompt:
+
+Ты — SmartHouse Assistant.
+
+Ты помогаешь пользователю управлять его умным домом.
+
+Правила:
+
+1. Никогда не выдумывай состояние дома.
+2. Для любых фактов о доме используй tools.
+3. Если tool не вернул данные — честно скажи, что данных недостаточно.
+4. Никогда не называй entity_id пользователю, если это не advanced/debug mode.
+5. Используй понятные названия комнат и устройств.
+6. Пиши кратко.
+7. При проблеме сначала сообщи факт, потом возможную причину.
+8. Не утверждай причинность без достаточных данных.
+9. Выполняй действия только через разрешённые tools.
+10. Не пытайся вызвать произвольный Home Assistant service.
+11. Для опасных действий требуй confirmation.
+12. Если пользователь просит создать automation — сначала создай draft.
+13. Если найдено несколько устройств с одинаковым названием — попроси уточнение.
+14. Если пользователь говорит "включи свет", но непонятно где — используй conversational context, иначе уточни.
+15. Не показывай внутренние JSON/tool calls пользователю.
+16. Если Home Assistant недоступен — сообщи об этом.
+17. Не подтверждай успешное действие, пока backend не вернул success.
+18. Учитывай язык пользователя.
+19. По умолчанию отвечай на русском, если пользователь пишет по-русски.
+20. Не перегружай ответ техническими подробностями.
+
+==================================================
+13. AI API ДЛЯ FLUTTER
+==================================================
+
+Создать API.
+
+Минимально:
+
+POST /api/ai/chat
+
+Request:
+{
+  "homeId": "...",
+  "conversationId": "...",
+  "message": "Что сейчас происходит дома?"
+}
+
+Response:
+{
+  "conversationId": "...",
+  "message": "...",
+  "type": "text",
+  "actions": [],
+  "suggestions": []
+}
+
+Для automation:
+
+{
+  "type": "automation_draft",
+  "message": "Я подготовил автоматизацию.",
+  "automationDraft": {...}
+}
+
+Для confirmation:
+
+{
+  "type": "confirmation",
+  "message": "Открыть входную дверь?",
+  "confirmation": {
+    "id": "...",
+    "action": "...",
+    "expiresAt": "..."
+  }
+}
+
+Дополнительно:
+
+POST /api/ai/confirm-action/:confirmationId
+
+POST /api/ai/cancel-action/:confirmationId
+
+GET /api/ai/conversations
+
+GET /api/ai/conversations/:id/messages
+
+DELETE /api/ai/conversations/:id
+
+Если проект уже использует другой API convention — следовать существующему.
+
+==================================================
+14. STREAMING
+==================================================
+
+Если архитектура позволяет — добавить streaming ответа.
+
+Предпочтительно:
+SSE или WebSocket.
+
+Но tool execution не должен ломать streaming.
+
+Можно вернуть этапы:
+
+{
+  "type": "status",
+  "status": "checking_home"
+}
+
+{
+  "type": "status",
+  "status": "analyzing"
+}
+
+{
+  "type": "delta",
+  "text": "..."
+}
+
+{
+  "type": "done"
+}
+
+Flutter позже сможет показывать:
+"Проверяю состояние дома..."
+"Смотрю историю температуры..."
+
+==================================================
+15. CONVERSATION CONTEXT
+==================================================
+
+Добавить conversations.
+
+Хранить:
+- conversation id;
+- user id;
+- home id;
+- user messages;
+- assistant messages;
+- tool calls;
+- created_at.
+
+Не хранить бесконечную историю в prompt.
+
+Реализовать:
+- последние N сообщений;
+- summary старого контекста;
+- token/context limits.
+
+Домовые данные нельзя сохранять в LoRA.
+
+Актуальные состояния всегда получать из HA.
+
+==================================================
+16. RAG / CONTEXT
+==================================================
+
+Для конкретного дома нужен динамический context.
+
+Создать AiContextService.
+
+Он может дать модели:
+- название дома;
+- rooms;
+- friendly device names;
+- типы устройств;
+- aliases;
+- пользовательские названия.
+
+Но не отправлять весь state без необходимости.
+
+Использовать tool calls для актуальных значений.
+
+Поддержать aliases.
+
+Например:
+"зал" = "Гостиная"
+"кухня" = room kitchen
+"основной свет" = конкретный light entity.
+
+Если в проекте уже есть room/device aliases — использовать их.
+
+==================================================
+17. КЕШИРОВАНИЕ
+==================================================
+
+Можно кешировать:
+- rooms;
+- device registry;
+- area registry;
+- entity metadata;
+- aliases.
+
+Не кешировать надолго:
+- текущий state;
+- critical sensors;
+- locks;
+- alarms.
+
+State лучше брать из existing WebSocket cache, если он уже есть в проекте.
+
+==================================================
+18. HOME ASSISTANT CONNECTION
+==================================================
+
+Использовать существующий HA integration.
+
+Если есть:
+- REST client;
+- WebSocket;
+- token storage;
+- reconnect;
+- state cache;
+
+не делать второй независимый connection layer.
+
+Нужно расширить существующий слой.
+
+Проверить поддержку:
+- /api/states
+- /api/history/period
+- /api/services
+- WebSocket state_changed events
+- areas/devices/entities registry, если уже доступно.
+
+==================================================
+19. SECURITY
+==================================================
+
+Обязательно:
+
+- не передавать HA token в LLM;
+- не писать HA token в logs;
+- не отправлять секреты модели;
+- tool args валидировать через schema;
+- проверять ownership home;
+- проверять user permissions;
+- rate limiting AI endpoint;
+- max tool rounds;
+- timeout;
+- confirmation expiry;
+- audit log действий AI;
+- запрещённые domains/actions blacklist;
+- разрешённые actions whitelist.
+
+Добавить AI audit:
+
+{
+  "user_id": "...",
+  "home_id": "...",
+  "conversation_id": "...",
+  "tool": "turn_off_device",
+  "target": "...",
+  "result": "success",
+  "timestamp": "..."
+}
+
+==================================================
+20. ЛОГИ
+==================================================
+
+Логировать:
+
+AI request id
+conversation id
+LLM latency
+tool name
+tool latency
+HA latency
+tool result success/error
+token usage, если provider возвращает
+final AI latency
+
+Не логировать:
+- access tokens;
+- refresh tokens;
+- passwords;
+- секретные headers.
+
+==================================================
+21. ERROR HANDLING
+==================================================
+
+Продумать ошибки:
+
+HA_OFFLINE
+HUB_OFFLINE
+DEVICE_NOT_FOUND
+DEVICE_UNAVAILABLE
+AMBIGUOUS_DEVICE
+ROOM_NOT_FOUND
+PERMISSION_DENIED
+ACTION_NOT_SUPPORTED
+ACTION_REQUIRES_CONFIRMATION
+ACTION_TIMEOUT
+LLM_TIMEOUT
+LLM_UNAVAILABLE
+LLM_INVALID_TOOL_CALL
+TOOL_VALIDATION_ERROR
+AUTOMATION_INVALID
+
+Пользовательские ответы должны быть понятными.
+
+Например:
+
+DEVICE_UNAVAILABLE:
+"Сейчас устройство недоступно. Последний раз Home Assistant видел его 18 минут назад."
+
+Не показывать stack traces.
+
+==================================================
+22. ТЕСТЫ
+==================================================
+
+Добавить unit/integration tests.
+
+Минимальные сценарии:
+
+1. "Что происходит дома?"
+2. "Какая температура в спальне?"
+3. "Где включён свет?"
+4. "Есть открытые окна?"
+5. "Выключи кухонный свет."
+6. Несуществующее устройство.
+7. Два устройства с одинаковым именем.
+8. HA offline.
+9. Device unavailable.
+10. Low-risk command success.
+11. High-risk command requires confirmation.
+12. Confirmation expired.
+13. Automation draft creation.
+14. Invalid automation.
+15. LLM attempts unsupported tool.
+16. LLM hallucinates unknown entity.
+17. Tool timeout.
+18. Qwen unavailable.
+
+Моки Qwen и Home Assistant должны позволять тестировать логику без реального HA.
+
+==================================================
+23. РЕЖИМ РАЗРАБОТКИ
+==================================================
+
+Добавить env:
+
+AI_ENABLED=true
+
+AI_PROVIDER=qwen
+
+QWEN_BASE_URL=
+QWEN_API_KEY=
+QWEN_MODEL=Qwen2.5-7B-Instruct
+
+AI_MAX_TOOL_ROUNDS=6
+AI_TIMEOUT_MS=60000
+
+AI_CONFIRMATION_TTL_SECONDS=120
+
+Не хардкодить secrets.
+
+Добавить .env.example.
+
+==================================================
+24. ЛОКАЛЬНЫЙ QWEN
+==================================================
+
+Архитектура должна поддерживать локальный inference.
+
+Например через OpenAI-compatible endpoint:
+
+POST /v1/chat/completions
+
+или другой adapter.
+
+Не привязывать core AI module к облаку.
+
+Цель:
+SmartHouse Backend может обращаться к локально запущенному Qwen.
+
+==================================================
+25. LORA
+==================================================
+
+На первом этапе LoRA не обязательна.
+
+Сделать систему так, чтобы без LoRA всё работало через:
+- system prompt;
+- tool schemas;
+- normalized HA context.
+
+LoRA можно добавить позже для:
+- русского языка умного дома;
+- стабильного tool selection;
+- автоматизаций;
+- фирменного стиля ответов;
+- диагностики.
+
+Не хранить в LoRA:
+- конкретные дома;
+- entity ids;
+- имена пользователей;
+- состояния устройств.
+
+==================================================
+26. UX RESPONSE FORMAT
+==================================================
+
+Backend AI response должен поддерживать UI cards.
+
+Например:
+
+{
+  "type": "home_summary",
+  "message": "Дома всё в порядке.",
+  "data": {
+    "temperature": 22.4,
+    "humidity": 46,
+    "lightsOn": 3,
+    "openWindows": 1
+  }
+}
+
+Device response:
+
+{
+  "type": "device_status",
+  "message": "Свет в гостиной включён.",
+  "device": {
+    "id": "...",
+    "name": "Свет в гостиной",
+    "state": "on"
+  }
+}
+
+Diagnostics:
+
+{
+  "type": "diagnostic",
+  "message": "...",
+  "findings": [
+    {
+      "severity": "warning",
+      "title": "Слабый Zigbee сигнал",
+      "description": "..."
+    }
+  ]
+}
+
+Automation draft:
+
+{
+  "type": "automation_draft",
+  "message": "...",
+  "draft": {...}
+}
+
+Это позволит Flutter отрисовывать не только текстовый чат.
+
+==================================================
+27. ПЕРВЫЙ MVP
+==================================================
+
+Сначала реализовать только:
+
+P0:
+
+1. AI chat endpoint
+2. Qwen provider abstraction
+3. tool calling
+4. get_home_summary
+5. get_rooms
+6. get_room_state
+7. get_device_state
+8. get_lights_state
+9. get_openings_state
+10. get_low_battery_devices
+11. get_unavailable_devices
+12. turn_on_device
+13. turn_off_device
+14. set_light_brightness
+15. run_scene
+16. automation draft
+17. safety/confirmation
+18. audit log
+
+P1:
+
+- history diagnostics
+- energy
+- proactive recommendations
+- full scene builder
+- advanced automation creation
+- conversational memory summary.
+
+Не пытайся реализовать всё сразу в одном огромном файле.
+
+==================================================
+28. ПЛАН РАБОТЫ CODEX
+==================================================
+
+Работай по этапам.
+
+ЭТАП 1 — анализ:
+- изучи структуру repo;
+- найди backend;
+- найди HA integration;
+- найди auth;
+- найди models/entities/rooms;
+- найди WebSocket state cache;
+- определи стек backend;
+- составь короткий implementation plan.
+
+ЭТАП 2 — core AI:
+- provider abstraction;
+- Qwen adapter;
+- AI orchestrator;
+- system prompt.
+
+ЭТАП 3 — tools:
+- registry;
+- schemas;
+- executor;
+- HA read tools.
+
+ЭТАП 4 — write actions:
+- lights;
+- scenes;
+- validation;
+- permissions.
+
+ЭТАП 5 — safety:
+- risk classification;
+- confirmations;
+- expiry;
+- audit.
+
+ЭТАП 6 — automation draft.
+
+ЭТАП 7 — API.
+
+ЭТАП 8 — tests.
+
+ЭТАП 9 — documentation.
+
+После каждого этапа:
+- проверь build;
+- lint;
+- tests;
+- исправь ошибки.
+
+==================================================
+29. ОЖИДАЕМЫЕ ФАЙЛЫ
+==================================================
+
+Точные пути адаптируй под проект.
+
+Пример:
+
+src/ai/
+  ai.module.*
+  ai.controller.*
+  ai.service.*
+  orchestrator/
+    ai-orchestrator.service.*
+  providers/
+    llm-provider.interface.*
+    qwen.provider.*
+  tools/
+    ai-tool-registry.*
+    ai-tool-executor.*
+    tools/
+      get-home-summary.tool.*
+      get-room-state.tool.*
+      get-device-state.tool.*
+      turn-on-device.tool.*
+      turn-off-device.tool.*
+      set-light-brightness.tool.*
+      run-scene.tool.*
+      prepare-automation-draft.tool.*
+  safety/
+    ai-safety.service.*
+    ai-confirmation.service.*
+  context/
+    ai-context.service.*
+  prompts/
+    smart-house-assistant.txt
+  dto/
+  types/
+  tests/
+
+Если backend Python:
+сделай аналогичную структуру в стиле существующего Python framework.
+
+Не навязывай Node/NestJS, если проект на другом стеке.
+
+==================================================
+30. DOCUMENTATION
+==================================================
+
+Добавить docs:
+
+docs/AI_ASSISTANT.md
+
+Описать:
+
+- архитектуру;
+- запуск Qwen;
+- env;
+- tools;
+- safety;
+- confirmation;
+- API;
+- примеры запросов;
+- ограничения;
+- локальный запуск;
+- тесты.
+
+Добавить примеры curl/API.
+
+==================================================
+31. DEFINITION OF DONE
+==================================================
+
+Функция считается готовой, когда:
+
+1. Backend запускается.
+2. Qwen provider подключается.
+3. AI endpoint отвечает.
+4. AI может запросить реальные HA данные через tools.
+5. AI не получает HA token.
+6. AI не выдумывает state при корректной работе tools.
+7. "Что происходит дома?" работает.
+8. "Где включён свет?" работает.
+9. "Какая температура в комнате?" работает.
+10. "Выключи свет" выполняется через HA tool.
+11. Неизвестное устройство обрабатывается корректно.
+12. Опасное действие требует confirmation.
+13. Automation natural-language request создаёт draft.
+14. Есть audit log.
+15. Есть tests.
+16. Есть документация.
+
+==================================================
+32. КРИТИЧЕСКИЕ ПРАВИЛА
+==================================================
+
+НЕ ДЕЛАТЬ:
+
+- не давать Qwen прямой HA access token;
+- не разрешать arbitrary service call;
+- не отправлять модели весь HA state всегда;
+- не полагаться на память модели для текущих данных;
+- не выполнять lock/alarm действия без confirmation;
+- не считать LLM output доверенным;
+- не хранить secrets в коде;
+- не создавать второй HA websocket client, если уже есть работающий;
+- не переписывать существующий backend без причины;
+- не ломать текущие API;
+- не выдавать tool JSON пользователю как ответ;
+- не утверждать "устройство выключено", пока backend это не подтвердил.
+
+==================================================
+33. ФИНАЛЬНЫЙ РЕЗУЛЬТАТ
+==================================================
+
+В результате в проекте должен появиться рабочий MVP SmartHouse AI Assistant:
+
+Пользователь:
+"Что сейчас происходит дома?"
+
+AI -> tool -> Home Assistant -> AI:
+"Дома всё в целом нормально. Температура 22,4 °C, влажность 46%. Включены три источника света. На кухне открыто окно, а у датчика ванной осталось 12% заряда."
+
+Пользователь:
+"Выключи свет на кухне."
+
+AI -> backend tool -> HA -> state confirmation:
+"Свет на кухне выключен."
+
+Пользователь:
+"Создай ночной свет в коридоре после 23:00."
+
+AI:
+создаёт валидируемый automation draft и отдаёт его Flutter для подтверждения.
+
+Сначала проанализируй репозиторий и существующую архитектуру. Затем покажи короткий план изменений и начинай реализацию по этапам, не ломая уже существующий функционал.

@@ -8,6 +8,9 @@ import userRoutes from './routes/users.js';
 import pushRoutes from './routes/push.js';
 import haRoutes, { oauthRouter } from './routes/home-assistant.js';
 import systemRoutes from './routes/systems.js';
+import aiRoutes from './routes/ai.js';
+import automationRoutes from './routes/automations.js';
+import appStateRoutes from './routes/app-state.js';
 
 const uploadsPath = fileURLToPath(config.uploadsDir);
 
@@ -32,10 +35,16 @@ export const createApp = () => {
   app.use('/api/push', pushRoutes);
   app.use('/api/home-assistant', haRoutes);
   app.use('/api/systems', systemRoutes);
+  app.use('/api/ai', aiRoutes);
+  app.use('/api/automations', automationRoutes);
+  app.use('/api/app-state', appStateRoutes);
   app.use((_req, res) => res.status(404).json({ error: 'Маршрут не найден' }));
   app.use((error, _req, res, _next) => {
     console.error(error);
-    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Внутренняя ошибка сервера' });
+    res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Внутренняя ошибка сервера',
+      ...(error.code ? { code: error.code } : {}),
+    });
   });
   return app;
 };

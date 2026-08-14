@@ -19,6 +19,8 @@ class ProfilePage extends StatefulWidget {
     required this.auth,
     required this.isDarkMode,
     required this.onToggleTheme,
+    required this.themeMode,
+    required this.onThemeModeChanged,
     required this.language,
     required this.onLanguageChanged,
     required this.onLogout,
@@ -29,6 +31,8 @@ class ProfilePage extends StatefulWidget {
   final AuthService auth;
   final bool isDarkMode;
   final VoidCallback onToggleTheme;
+  final ThemeMode themeMode;
+  final Future<void> Function(ThemeMode mode) onThemeModeChanged;
   final AppLanguage language;
   final Future<void> Function(AppLanguage language) onLanguageChanged;
   final Future<void> Function() onLogout;
@@ -39,13 +43,22 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
+  late String avatarUrl = widget.session.avatarUrl;
+
   void _openMyProfile() {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => MyProfilePage(
-          session: widget.session,
+          session: AppSession(
+            id: widget.session.id,
+            token: widget.session.token,
+            email: widget.session.email,
+            fio: widget.session.fio,
+            avatarUrl: avatarUrl,
+          ),
           auth: widget.auth,
           onNameChanged: widget.onNameChanged,
+          onAvatarChanged: (value) => setState(() => avatarUrl = value),
         ),
       ),
     );
@@ -60,6 +73,13 @@ class _ProfilePageState extends State<ProfilePage> {
 
   void _openSecurity() => Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => SecuritySettingsPage(auth: widget.auth),
+      ));
+
+  void _openTheme() => Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ThemeSettingsPage(
+          themeMode: widget.themeMode,
+          onChanged: widget.onThemeModeChanged,
+        ),
       ));
 
   void _openNotifications() {
@@ -122,6 +142,17 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           const SizedBox(height: 10),
           _ProfileTile(
+            icon: Icons.palette_outlined,
+            title: I18n.t('Тема', 'Тема', 'Theme'),
+            trailing: switch (widget.themeMode) {
+              ThemeMode.light => I18n.t('Светлая', 'Югыт', 'Light'),
+              ThemeMode.dark => I18n.t('Тёмная', 'Пеймыт', 'Dark'),
+              ThemeMode.system => I18n.t('Системная', 'Система', 'System'),
+            },
+            onTap: _openTheme,
+          ),
+          const SizedBox(height: 10),
+          _ProfileTile(
             icon: Icons.notifications_outlined,
             title: I18n.t('Уведомления', 'Иворъёс', 'Notifications'),
             onTap: _openNotifications,
@@ -178,11 +209,13 @@ class MyProfilePage extends StatefulWidget {
     required this.session,
     required this.auth,
     this.onNameChanged,
+    this.onAvatarChanged,
     this.onFinished,
   });
   final AppSession session;
   final AuthService auth;
   final ValueChanged<String>? onNameChanged;
+  final ValueChanged<String>? onAvatarChanged;
   final VoidCallback? onFinished;
 
   @override
@@ -201,14 +234,25 @@ class _MyProfilePageState extends State<MyProfilePage> {
     if (picking) return;
     setState(() => picking = true);
     try {
-      final result = await FilePicker.platform
-          .pickFiles(type: FileType.image, allowMultiple: false);
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+        withData: true,
+      );
       if (result == null || result.files.isEmpty) return;
       final file = result.files.first;
-      if (file.bytes == null) return;
+      if (file.bytes == null || file.bytes!.isEmpty) {
+        throw Exception('Не удалось прочитать выбранное изображение');
+      }
       setState(() => avatarBytes = file.bytes);
       final value = await widget.auth.uploadAvatar(file: file);
-      if (mounted) setState(() => avatarUrl = value);
+      if (value.isEmpty) {
+        throw Exception('Сервер не вернул адрес загруженного аватара');
+      }
+      if (mounted) {
+        setState(() => avatarUrl = value);
+        widget.onAvatarChanged?.call(value);
+      }
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -431,7 +475,7 @@ class _ProfileTile extends StatelessWidget {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: const Color(0xFFFF7A18).withValues(alpha: .14),
+                color: const Color(0xFFFF7A18).withOpacity(.14),
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Icon(icon, color: const Color(0xFFFF8A2A), size: 21),

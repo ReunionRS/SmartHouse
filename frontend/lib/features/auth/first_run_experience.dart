@@ -22,36 +22,32 @@ class _FirstRunExperienceState extends State<FirstRunExperience> {
 
   static const pages = <_OnboardingData>[
     _OnboardingData(
-      icon: Icons.home_rounded,
+      background: 'home',
       eyebrow: 'Дом под контролем',
       title: 'Весь дом\nв одном приложении',
       description:
           'Управляйте светом, климатом и устройствами без сложного интерфейса.',
-      accents: [Color(0xFFFF8A2A), Color(0xFFFF7A18)],
     ),
     _OnboardingData(
-      icon: Icons.auto_awesome_rounded,
+      background: 'scenes',
       eyebrow: 'Умные сценарии',
       title: 'Дом понимает\nваш ритм',
       description:
           '«Я дома», «Я ушёл», «Доброе утро» и «Спокойной ночи» запускаются в одно касание.',
-      accents: [Color(0xFFFF8A2A), Color(0xFFFF7A18)],
     ),
     _OnboardingData(
-      icon: Icons.shield_rounded,
+      background: 'security',
       eyebrow: 'Безопасность',
       title: 'Важное —\nвсегда под контролем',
       description:
           'Камеры, датчики движения, двери и протечки — с понятными статусами и уведомлениями.',
-      accents: [Color(0xFFFF8A2A), Color(0xFFFF7A18)],
     ),
     _OnboardingData(
-      icon: Icons.bolt_rounded,
+      background: 'energy',
       eyebrow: 'Контроль энергии',
       title: 'Меньше трат.\nБольше комфорта.',
       description:
           'Отслеживайте потребление, находите лишние расходы и берегите ресурсы.',
-      accents: [Color(0xFFFF8A2A), Color(0xFFFF7A18)],
     ),
   ];
 
@@ -82,167 +78,183 @@ class _FirstRunExperienceState extends State<FirstRunExperience> {
   Widget build(BuildContext context) {
     final data = pages[page];
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final foreground = isDark ? Colors.white : const Color(0xFF17120E);
+    final secondary =
+        isDark ? const Color(0xFFD0D5DB) : const Color(0xFF5F5A55);
+
     return Scaffold(
-      backgroundColor: const Color(0xFF0C0907),
-      body: AnimatedContainer(
-        duration: Duration(milliseconds: reduceMotion ? 1 : 350),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              data.accents.first.withValues(alpha: .35),
-              const Color(0xFF17100B),
-              data.accents.last.withValues(alpha: .18)
-            ],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            children: [
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                    onPressed: finish, child: const Text('Пропустить')),
-              ),
-              Expanded(
-                child: PageView.builder(
-                  controller: controller,
-                  itemCount: pages.length,
-                  onPageChanged: (value) => setState(() => page = value),
-                  itemBuilder: (_, index) =>
-                      _OnboardingPage(data: pages[index]),
+      backgroundColor:
+          isDark ? const Color(0xFF0C0907) : const Color(0xFFF6F0E9),
+      body: Stack(fit: StackFit.expand, children: [
+        AnimatedSwitcher(
+          duration: Duration(milliseconds: reduceMotion ? 1 : 420),
+          child: ClipRect(
+            key: ValueKey('${data.background}_$isDark'),
+            child: Transform.translate(
+              offset: Offset(0, isDark ? 0 : -110),
+              child: Transform.scale(
+                scale: isDark ? 1.04 : 1.25,
+                alignment:
+                    isDark ? Alignment.bottomCenter : Alignment.center,
+                child: Image.asset(
+                  'assets/images/onboarding/${data.background}_${isDark ? 'dark' : 'light'}.png',
+                  fit: BoxFit.cover,
+                  alignment:
+                      isDark ? Alignment.center : const Alignment(-0.45, 0),
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 10, 24, 24),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Row(
-                        children: List.generate(
-                            pages.length,
-                            (index) => AnimatedContainer(
-                                  duration: const Duration(milliseconds: 240),
-                                  margin: const EdgeInsets.only(right: 7),
-                                  width: page == index ? 24 : 7,
-                                  height: 7,
-                                  decoration: BoxDecoration(
-                                      color: page == index
-                                          ? Colors.white
-                                          : Colors.white24,
-                                      borderRadius: BorderRadius.circular(9)),
-                                )),
-                      ),
-                    ),
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(colors: data.accents),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                              color: data.accents.first.withValues(alpha: .45),
-                              blurRadius: 24)
-                        ],
-                      ),
-                      child: IconButton(
-                          onPressed: next,
-                          icon: Icon(page == pages.length - 1
-                              ? Icons.check_rounded
-                              : Icons.arrow_forward_rounded),
-                          color: Colors.white,
-                          iconSize: 27,
-                          padding: const EdgeInsets.all(17)),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            ),
           ),
         ),
-      ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: isDark
+                  ? const [
+                      Color(0x22000000),
+                      Color(0x33000000),
+                      Color(0xF20A0806),
+                    ]
+                  : const [
+                      Color(0x11FFFFFF),
+                      Color(0x44FFFFFF),
+                      Color(0xF7F6F0E9),
+                    ],
+              stops: const [0, .48, .76],
+            ),
+          ),
+        ),
+        SafeArea(
+          child: Column(children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: finish,
+                style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFFF7A18)),
+                child: const Text('Пропустить'),
+              ),
+            ),
+            Expanded(
+              child: PageView.builder(
+                controller: controller,
+                itemCount: pages.length,
+                onPageChanged: (value) => setState(() => page = value),
+                itemBuilder: (_, index) => _OnboardingPage(
+                  data: pages[index],
+                  foreground: foreground,
+                  secondary: secondary,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 10, 24, 24),
+              child: Row(children: [
+                Expanded(
+                  child: Row(
+                    children: List.generate(
+                      pages.length,
+                      (index) => AnimatedContainer(
+                        duration: const Duration(milliseconds: 240),
+                        margin: const EdgeInsets.only(right: 7),
+                        width: page == index ? 24 : 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          color: page == index
+                              ? foreground
+                              : foreground.withOpacity(.24),
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF7A18),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFFF7A18).withOpacity(.38),
+                        blurRadius: 24,
+                      ),
+                    ],
+                  ),
+                  child: IconButton(
+                    onPressed: next,
+                    icon: Icon(page == pages.length - 1
+                        ? Icons.check_rounded
+                        : Icons.arrow_forward_rounded),
+                    color: Colors.white,
+                    iconSize: 27,
+                    padding: const EdgeInsets.all(17),
+                  ),
+                ),
+              ]),
+            ),
+          ]),
+        ),
+      ]),
     );
   }
 }
 
 class _OnboardingPage extends StatelessWidget {
-  const _OnboardingPage({required this.data});
+  const _OnboardingPage({
+    required this.data,
+    required this.foreground,
+    required this.secondary,
+  });
+
   final _OnboardingData data;
+  final Color foreground;
+  final Color secondary;
 
   @override
   Widget build(BuildContext context) => Padding(
         padding: const EdgeInsets.fromLTRB(24, 18, 24, 20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Spacer(),
-          Center(child: _GlassOrb(data: data)),
-          const Spacer(),
-          Text(data.eyebrow.toUpperCase(),
-              style: TextStyle(
-                  color: data.accents.first,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1.3)),
+          Text(
+            data.eyebrow.toUpperCase(),
+            style: const TextStyle(
+              color: Color(0xFFFF8A2A),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.3,
+            ),
+          ),
           const SizedBox(height: 12),
-          Text(data.title,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 34,
-                  height: 1.08,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -.8)),
+          Text(
+            data.title,
+            style: TextStyle(
+              color: foreground,
+              fontSize: 34,
+              height: 1.08,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -.8,
+            ),
+          ),
           const SizedBox(height: 16),
           Text(data.description,
-              style: const TextStyle(
-                  color: Color(0xFFB4C2D0), fontSize: 16, height: 1.5)),
+              style: TextStyle(color: secondary, fontSize: 16, height: 1.5)),
         ]),
       );
 }
 
-class _GlassOrb extends StatelessWidget {
-  const _GlassOrb({required this.data});
-  final _OnboardingData data;
-  @override
-  Widget build(BuildContext context) => Container(
-        width: 220,
-        height: 220,
-        decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: RadialGradient(colors: [
-              data.accents.first.withValues(alpha: .32),
-              Colors.transparent
-            ]),
-            boxShadow: [
-              BoxShadow(
-                  color: data.accents.last.withValues(alpha: .22),
-                  blurRadius: 70,
-                  spreadRadius: 8)
-            ]),
-        alignment: Alignment.center,
-        child: Container(
-          width: 126,
-          height: 126,
-          decoration: BoxDecoration(
-              gradient: LinearGradient(colors: [
-                Colors.white.withValues(alpha: .25),
-                data.accents.last.withValues(alpha: .42)
-              ]),
-              borderRadius: BorderRadius.circular(38),
-              border: Border.all(color: Colors.white38)),
-          child: Icon(data.icon, color: Colors.white, size: 61),
-        ),
-      );
-}
-
 class _OnboardingData {
-  const _OnboardingData(
-      {required this.icon,
-      required this.eyebrow,
-      required this.title,
-      required this.description,
-      required this.accents});
-  final IconData icon;
+  const _OnboardingData({
+    required this.background,
+    required this.eyebrow,
+    required this.title,
+    required this.description,
+  });
+
+  final String background;
   final String eyebrow;
   final String title;
   final String description;
-  final List<Color> accents;
 }

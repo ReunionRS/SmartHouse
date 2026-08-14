@@ -24,16 +24,15 @@ dependencies:
   # web 0.5.x dependency used by this project.
   file_picker: 8.0.7
   url_launcher: ^6.3.1
-  app_links: ^6.4.0
+  app_links: 6.4.0
   flutter_local_notifications: ^17.2.3
   package_info_plus: ^8.0.2
   google_fonts: ^6.2.1
   material_design_icons_flutter: 7.0.7296
-  firebase_core: ^2.27.1
-  firebase_messaging: ^14.7.21
+  flutter_markdown_plus: ^1.0.0+1
 
 dependency_overrides:
-  flutter_plugin_android_lifecycle: ^2.0.31
+  flutter_plugin_android_lifecycle: 2.0.20
 
 dev_dependencies:
   flutter_test:
@@ -44,24 +43,8 @@ flutter:
   uses-material-design: true
   assets:
     - Logo.png
-    - assets/images/smart_home_interior.jpg
-    - assets/images/room_living.jpg
-    - assets/images/room_kitchen.jpg
-    - assets/images/room_bedroom.jpg
-    - assets/images/room_bathroom.jpg
-    - assets/images/room_office.jpg
-    - assets/images/room_hallway.jpg
-    - assets/images/devices/light.webp
-    - assets/images/devices/light_cool.png
-    - assets/images/devices/light_warm.png
-    - assets/images/devices/camera.webp
-    - assets/images/devices/socket.webp
-    - assets/images/devices/thermostat.webp
-    - assets/images/devices/motion_sensor.webp
-    - assets/images/devices/smoke_sensor.webp
-    - assets/images/devices/leak_sensor.webp
-    - assets/images/devices/air_conditioner.webp
-    - assets/images/devices/smart_lock.webp
-    - assets/images/devices/hub.webp
-    - assets/images/devices/temperature_humidity.png
-    - assets/images/devices/rgb_strip.png
+    - assets/images/backgrounds/
+    - assets/images/devices/
+    - assets/images/icons/
+    - assets/images/onboarding/
+    - assets/images/rooms/

@@ -11,6 +11,7 @@ class HomeAssistantRoom {
     this.picture = '',
     this.temperatureEntityId = '',
     this.humidityEntityId = '',
+    this.roomType = '',
   });
 
   final String areaId;
@@ -24,6 +25,7 @@ class HomeAssistantRoom {
   final String picture;
   final String temperatureEntityId;
   final String humidityEntityId;
+  final String roomType;
 
   factory HomeAssistantRoom.fromJson(Map<String, dynamic> json) {
     List<String> strings(String key) => json[key] is List
@@ -42,6 +44,7 @@ class HomeAssistantRoom {
       picture: (json['picture'] ?? '').toString(),
       temperatureEntityId: (json['temperature_entity_id'] ?? '').toString(),
       humidityEntityId: (json['humidity_entity_id'] ?? '').toString(),
+      roomType: (json['room_type'] ?? '').toString(),
     );
   }
 
@@ -57,5 +60,6 @@ class HomeAssistantRoom {
         'picture': picture,
         'temperature_entity_id': temperatureEntityId,
         'humidity_entity_id': humidityEntityId,
+        'room_type': roomType,
       };
 }

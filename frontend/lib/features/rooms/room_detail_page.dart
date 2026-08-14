@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:material_design_icons_flutter/material_design_icons_flutter.dart';
 
 import '../../core/i18n.dart';
+import '../../core/room_localization.dart';
 import '../../models/home_assistant_room.dart';
 import '../../models/local_room_device.dart';
 import '../../services/room_service.dart';
@@ -28,18 +29,24 @@ class RoomDetailPage extends StatefulWidget {
 
 class _RoomDetailPageState extends State<RoomDetailPage> {
   List<LocalRoomDevice> devices = const [];
+  bool loadingDevices = true;
 
   @override
   void initState() {
     super.initState();
+    devices = widget.service.cachedDevicesForRoom(widget.room.areaId);
+    loadingDevices = devices.isEmpty;
     load();
   }
 
   Future<void> load() async {
     final all = await widget.service.loadDevices(widget.userId);
     if (mounted) {
-      setState(() => devices =
-          all.where((item) => item.roomId == widget.room.areaId).toList());
+      setState(() {
+        devices =
+            all.where((item) => item.roomId == widget.room.areaId).toList();
+        loadingDevices = false;
+      });
     }
   }
 
@@ -57,8 +64,9 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
       name: draft.$1,
       type: draft.$2,
     );
-    await load();
-    if (mounted) openDevice(device);
+    if (!mounted) return;
+    setState(() => devices = [...devices, device]);
+    openDevice(device);
   }
 
   Future<void> openDevice(LocalRoomDevice device) async {
@@ -79,9 +87,9 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
         title: Text(I18n.t(
             'Удалить устройство?', 'Устройствоез быдтыны?', 'Delete device?')),
         content: Text(I18n.t(
-          '«${device.name}» будет удалено из комнаты «${widget.room.name}» и из избранного.',
+          '«${device.name}» будет удалено из комнаты «${localizedRoomName(widget.room)}» и из избранного.',
           '«${device.name}» быдтоз.',
-          '“${device.name}” will be removed from “${widget.room.name}” and favorites.',
+          '“${device.name}” will be removed from “${localizedRoomName(widget.room)}” and favorites.',
         )),
         actions: [
           TextButton(
@@ -118,7 +126,10 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
           flexibleSpace: FlexibleSpaceBar(
             background: Stack(fit: StackFit.expand, children: [
               RoomAtlasImage(
-                  index: widget.roomIndex, roomName: widget.room.name),
+                  index: widget.roomIndex,
+                  roomName: localizedRoomName(widget.room),
+                  roomIcon: widget.room.icon,
+                  roomType: widget.room.roomType),
               const DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
@@ -140,13 +151,16 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
                 child:
                     Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                   Expanded(
-                    child: Text(widget.room.name,
+                    child: Text(localizedRoomName(widget.room),
                         style: const TextStyle(
                             color: Colors.white,
                             fontSize: 27,
                             fontWeight: FontWeight.w700)),
                   ),
-                  Text('${devices.length} ${_deviceWord(devices.length)}',
+                  Text(
+                      loadingDevices
+                          ? '…'
+                          : '${devices.length} ${_deviceWord(devices.length)}',
                       style:
                           const TextStyle(color: Colors.white70, fontSize: 12)),
                 ]),
@@ -170,7 +184,29 @@ class _RoomDetailPageState extends State<RoomDetailPage> {
               ),
             ]),
             const SizedBox(height: 12),
-            if (devices.isEmpty)
+            if (loadingDevices)
+              Container(
+                height: 150,
+                decoration: _cardDecoration(context),
+                alignment: Alignment.center,
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.5,
+                      color: _accent,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    I18n.t('Загружаем устройства…',
+                        'Устройстваосты тырматӥськом…', 'Loading devices…'),
+                    style: TextStyle(color: muted, fontSize: 12),
+                  ),
+                ]),
+              )
+            else if (devices.isEmpty)
               Container(
                 padding: const EdgeInsets.all(28),
                 decoration: _cardDecoration(context),
@@ -312,9 +348,11 @@ class _SmartLightPageState extends State<SmartLightPage> {
         device.type == 'rgb_light' ||
         device.type == 'rgb_strip';
     final isRgb = device.type == 'rgb_light' || device.type == 'rgb_strip';
-    final isEnvironment = device.type == 'temperature_humidity_sensor';
-    final isSensor =
-        device.type == 'motion_sensor' || device.type == 'leak_sensor';
+    final isEnvironment = device.type == 'temperature_humidity_sensor' ||
+        device.type == 'temperature_sensor';
+    final isSensor = device.type == 'motion_sensor' ||
+        device.type == 'leak_sensor' ||
+        device.type == 'contact_sensor';
     return Scaffold(
       backgroundColor: dark ? const Color(0xFF151B24) : const Color(0xFFF3F5F8),
       appBar: AppBar(
@@ -351,8 +389,7 @@ class _SmartLightPageState extends State<SmartLightPage> {
                 child: Image.asset(
                   asset,
                   fit: BoxFit.contain,
-                  color:
-                      device.isOn ? null : Colors.black.withValues(alpha: .48),
+                  color: device.isOn ? null : Colors.black.withOpacity(.48),
                   colorBlendMode: BlendMode.darken,
                 ),
               ),
@@ -367,13 +404,15 @@ class _SmartLightPageState extends State<SmartLightPage> {
                 label: I18n.t('Температура', 'Температура', 'Temperature'),
                 value: '${device.temperature.toStringAsFixed(1)}°C',
               )),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: _SensorValueCard(
-                icon: MdiIcons.waterPercent,
-                label: I18n.t('Влажность', 'Влажность', 'Humidity'),
-                value: '${device.humidity.round()}%',
-              )),
+              if (device.type == 'temperature_humidity_sensor') ...[
+                const SizedBox(width: 10),
+                Expanded(
+                    child: _SensorValueCard(
+                  icon: MdiIcons.waterPercent,
+                  label: I18n.t('Влажность', 'Влажность', 'Humidity'),
+                  value: '${device.humidity.round()}%',
+                )),
+              ],
             ])
           else if (!isSensor)
             Container(
@@ -494,7 +533,9 @@ class _SmartLightPageState extends State<SmartLightPage> {
             _SensorStatusTile(
               icon: device.type == 'leak_sensor'
                   ? MdiIcons.waterCheckOutline
-                  : MdiIcons.motionSensor,
+                  : device.type == 'contact_sensor'
+                      ? MdiIcons.doorOpen
+                      : MdiIcons.motionSensor,
               label: I18n.t(
                   'Состояние датчика', 'Датчиклэн интые', 'Sensor status'),
               title: device.type == 'leak_sensor'
@@ -503,11 +544,15 @@ class _SmartLightPageState extends State<SmartLightPage> {
                           'Обнаружена протечка', 'Ву ортчиз', 'Leak detected')
                       : I18n.t('Протечек не обнаружено', 'Ву ӧвӧл',
                           'No leak detected'))
-                  : (device.isOn
-                      ? I18n.t('Обнаружено движение', 'Кошкон вань',
-                          'Motion detected')
-                      : I18n.t('Движение не обнаружено', 'Кошкон ӧвӧл',
-                          'No motion detected')),
+                  : device.type == 'contact_sensor'
+                      ? (device.isOn
+                          ? I18n.t('Открыто', 'Усьтэмын', 'Open')
+                          : I18n.t('Закрыто', 'Тупатэмын', 'Closed'))
+                      : (device.isOn
+                          ? I18n.t('Обнаружено движение', 'Кошкон вань',
+                              'Motion detected')
+                          : I18n.t('Движение не обнаружено', 'Кошкон ӧвӧл',
+                              'No motion detected')),
               active: device.isOn,
             )
           else if (isEnvironment)
@@ -536,20 +581,46 @@ class _SmartLightPageState extends State<SmartLightPage> {
 }
 
 class RoomAtlasImage extends StatelessWidget {
-  const RoomAtlasImage({super.key, required this.index, this.roomName});
+  const RoomAtlasImage(
+      {super.key,
+      required this.index,
+      this.roomName,
+      this.roomIcon,
+      this.roomType});
   final int index;
   final String? roomName;
+  final String? roomIcon;
+  final String? roomType;
 
   static const images = [
-    'assets/images/room_living.jpg',
-    'assets/images/room_kitchen.jpg',
-    'assets/images/room_bedroom.jpg',
-    'assets/images/room_bathroom.jpg',
-    'assets/images/room_office.jpg',
-    'assets/images/room_hallway.jpg',
+    'assets/images/rooms/room_living.jpg',
+    'assets/images/rooms/room_kitchen.jpg',
+    'assets/images/rooms/room_bedroom.jpg',
+    'assets/images/rooms/room_bathroom.jpg',
+    'assets/images/rooms/room_office.jpg',
+    'assets/images/rooms/room_hallway.jpg',
+  ];
+  static const lightImages = [
+    'assets/images/rooms/room_living_light.png',
+    'assets/images/rooms/room_kitchen_light.png',
+    'assets/images/rooms/room_bedroom_light.png',
+    'assets/images/rooms/room_bathroom_light.png',
+    'assets/images/rooms/room_office_light.png',
+    'assets/images/rooms/room_hallway_light.png',
   ];
 
   int get imageIndex {
+    final mapped = const <String, int>{
+      'living_room': 0,
+      'kitchen': 1,
+      'bedroom': 2,
+      'bathroom': 3,
+      'office': 4,
+      'garage': 5,
+      'hallway': 5,
+      'entryway': 5,
+    }[roomType];
+    if (mapped != null) return mapped;
     final name = roomName?.toLowerCase() ?? '';
     if (name.contains('гост') || name.contains('living')) return 0;
     if (name.contains('кух') || name.contains('kitchen')) return 1;
@@ -564,14 +635,48 @@ class RoomAtlasImage extends StatelessWidget {
     return index % images.length;
   }
 
+  static const iconAssets = <String, String>{
+    'mdi:table-chair': 'room_dining',
+    'mdi:baby-face-outline': 'room_kids',
+    'mdi:door-open': 'room_entryway',
+    'mdi:stairs': 'room_corridor',
+    'mdi:washing-machine': 'room_laundry',
+    'mdi:food-apple-outline': 'room_pantry',
+    'mdi:balcony': 'room_balcony',
+    'mdi:flower-outline': 'room_terrace',
+    'mdi:greenhouse': 'room_garden',
+    'mdi:home-floor-negative-1': 'room_basement',
+    'mdi:tools': 'room_workshop',
+  };
+
+  static const typeAssets = <String, String>{
+    'dining_room': 'room_dining',
+    'kids_room': 'room_kids',
+    'entryway': 'room_entryway',
+    'hallway': 'room_corridor',
+    'laundry_room': 'room_laundry',
+    'pantry': 'room_pantry',
+    'balcony': 'room_balcony',
+    'terrace': 'room_terrace',
+    'garden': 'room_garden',
+    'basement': 'room_basement',
+    'workshop': 'room_workshop',
+  };
+
   @override
-  Widget build(BuildContext context) => Image.asset(
-        images[imageIndex],
-        fit: BoxFit.cover,
-        alignment: Alignment.center,
-        errorBuilder: (_, __, ___) =>
-            const ColoredBox(color: Color(0xFF141A20)),
-      );
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final generated = typeAssets[roomType] ?? iconAssets[roomIcon];
+    final path = generated == null
+        ? (isDark ? images : lightImages)[imageIndex]
+        : 'assets/images/rooms/$generated${isDark ? '' : '_light'}.png';
+    return Image.asset(
+      path,
+      fit: BoxFit.cover,
+      alignment: Alignment.center,
+      errorBuilder: (_, __, ___) => const ColoredBox(color: Color(0xFF141A20)),
+    );
+  }
 }
 
 class _AddDeviceSheet extends StatefulWidget {
@@ -583,15 +688,27 @@ class _AddDeviceSheet extends StatefulWidget {
 class _AddDeviceSheetState extends State<_AddDeviceSheet> {
   final controller = TextEditingController(text: 'Smart Light');
   String type = 'light';
-  static final types = [
-    ('light', 'Лампа'),
-    ('rgb_light', 'RGB лампочка'),
-    ('rgb_strip', 'RGB подсветка'),
-    ('temperature_humidity_sensor', 'Температура и влажность'),
-    ('socket', 'Умная розетка'),
-    ('leak_sensor', 'Датчик протечки'),
-    ('motion_sensor', 'Датчик движения'),
-  ];
+  List<(String, String)> get types => [
+        ('light', I18n.t('Лампа', 'Лампа', 'Light')),
+        ('switch', I18n.t('Выключатель', 'Кутӥсь', 'Switch')),
+        ('socket', I18n.t('Розетка', 'Розетка', 'Socket')),
+        (
+          'contact_sensor',
+          I18n.t('Датчик открытия', 'Усьтон датчик', 'Opening sensor')
+        ),
+        (
+          'motion_sensor',
+          I18n.t('Датчик движения', 'Кошкон датчик', 'Motion sensor')
+        ),
+        ('leak_sensor', I18n.t('Датчик протечки', 'Ву датчик', 'Leak sensor')),
+        ('rgb_light', I18n.t('RGB лампочка', 'RGB лампа', 'RGB light')),
+        ('rgb_strip', I18n.t('RGB подсветка', 'RGB югыт', 'RGB strip')),
+        (
+          'temperature_humidity_sensor',
+          I18n.t('Температура и влажность', 'Температура но влажность',
+              'Temperature and humidity')
+        ),
+      ];
 
   @override
   void dispose() {
@@ -600,134 +717,138 @@ class _AddDeviceSheetState extends State<_AddDeviceSheet> {
   }
 
   @override
-  Widget build(BuildContext context) => Container(
-        padding: EdgeInsets.fromLTRB(
-            20, 14, 20, MediaQuery.viewInsetsOf(context).bottom + 20),
+  Widget build(BuildContext context) => AnimatedPadding(
+      duration: const Duration(milliseconds: 180),
+      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+      child: Container(
+        height: MediaQuery.sizeOf(context).height * .86,
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
+          color: Theme.of(context).brightness == Brightness.dark
+              ? Theme.of(context).colorScheme.surface
+              : Colors.white.withOpacity(.94),
           borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         ),
         child: SafeArea(
           top: false,
-          child: SingleChildScrollView(
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                      child: Container(
-                          width: 42,
-                          height: 4,
-                          decoration: BoxDecoration(
-                              color: Theme.of(context).dividerColor,
-                              borderRadius: BorderRadius.circular(4)))),
-                  const SizedBox(height: 20),
-                  Text(
-                      I18n.t('Добавить устройство', 'Устройство ватсаны',
-                          'Add device'),
-                      style: Theme.of(context).textTheme.headlineSmall),
-                  const SizedBox(height: 16),
-                  TextField(
-                      controller: controller,
-                      decoration: InputDecoration(
-                          labelText: I18n.t('Название', 'Ним', 'Name'))),
-                  const SizedBox(height: 14),
-                  GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: types.length,
-                    gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
-                      childAspectRatio: 1.35,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
-                    ),
-                    itemBuilder: (_, index) {
-                      final item = types[index];
-                      final selected = type == item.$1;
-                      final asset = DeviceAssetCatalog.forType(item.$1) ??
-                          DeviceAssetCatalog.hub;
-                      return InkWell(
-                        onTap: () => setState(() {
-                          type = item.$1;
-                          controller.text = item.$2;
-                        }),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Center(
+                child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                        color: Theme.of(context).dividerColor,
+                        borderRadius: BorderRadius.circular(4)))),
+            const SizedBox(height: 20),
+            Text(
+                I18n.t(
+                    'Добавить устройство', 'Устройство ватсаны', 'Add device'),
+                style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 16),
+            TextField(
+                controller: controller,
+                decoration: InputDecoration(
+                    labelText: I18n.t('Название', 'Ним', 'Name'))),
+            const SizedBox(height: 14),
+            Expanded(
+              child: GridView.builder(
+                padding: const EdgeInsets.only(bottom: 10),
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                itemCount: types.length,
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  childAspectRatio: 1.5,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                ),
+                itemBuilder: (_, index) {
+                  final item = types[index];
+                  final selected = type == item.$1;
+                  final asset = DeviceAssetCatalog.forType(item.$1) ??
+                      DeviceAssetCatalog.hub;
+                  return InkWell(
+                    onTap: () => setState(() {
+                      type = item.$1;
+                      controller.text = item.$2;
+                    }),
+                    borderRadius: BorderRadius.circular(18),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(18),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 220),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(
-                              color: selected
-                                  ? _accent
-                                  : Theme.of(context).dividerColor,
-                              width: selected ? 2 : 1,
-                            ),
-                            boxShadow: selected
-                                ? [
-                                    BoxShadow(
-                                      color: _accent.withValues(alpha: .22),
-                                      blurRadius: 14,
-                                    )
-                                  ]
-                                : null,
-                          ),
-                          child: Stack(children: [
-                            Positioned(
-                              left: 12,
-                              right: 12,
-                              top: 7,
-                              height: 78,
-                              child: Image.asset(
-                                asset,
-                                fit: BoxFit.contain,
-                                alignment: Alignment.center,
-                              ),
-                            ),
-                            Positioned(
-                              left: 12,
-                              right: 12,
-                              bottom: 10,
-                              child: Text(
-                                item.$2,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            if (selected)
-                              const Positioned(
-                                right: 8,
-                                top: 8,
-                                child: Icon(Icons.check_circle_rounded,
-                                    color: _accent, size: 20),
-                              ),
-                          ]),
+                        border: Border.all(
+                          color: selected
+                              ? _accent
+                              : Theme.of(context).dividerColor,
+                          width: selected ? 2 : 1,
                         ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 20),
-                  FilledButton.icon(
-                    onPressed: () {
-                      if (controller.text.trim().isNotEmpty) {
-                        Navigator.pop(context, (controller.text.trim(), type));
-                      }
-                    },
-                    icon: const Icon(Icons.add_rounded),
-                    label: Text(I18n.t('Добавить', 'Ватсаны', 'Add')),
-                  ),
-                ]),
-          ),
+                        boxShadow: selected
+                            ? [
+                                BoxShadow(
+                                  color: _accent.withOpacity(.22),
+                                  blurRadius: 14,
+                                )
+                              ]
+                            : null,
+                      ),
+                      child: Stack(children: [
+                        Positioned(
+                          left: 12,
+                          right: 12,
+                          top: 7,
+                          height: 78,
+                          child: Image.asset(
+                            asset,
+                            fit: BoxFit.contain,
+                            alignment: Alignment.center,
+                          ),
+                        ),
+                        Positioned(
+                          left: 12,
+                          right: 12,
+                          bottom: 10,
+                          child: Text(
+                            item.$2,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (selected)
+                          const Positioned(
+                            right: 8,
+                            top: 8,
+                            child: Icon(Icons.check_circle_rounded,
+                                color: _accent, size: 20),
+                          ),
+                      ]),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            FilledButton.icon(
+              onPressed: () {
+                if (controller.text.trim().isNotEmpty) {
+                  Navigator.pop(context, (controller.text.trim(), type));
+                }
+              },
+              icon: const Icon(Icons.add_rounded),
+              label: Text(I18n.t('Добавить', 'Ватсаны', 'Add')),
+            ),
+          ]),
         ),
-      );
+      ));
 }
 
 class _DeviceTile extends StatelessWidget {
@@ -744,28 +865,39 @@ class _DeviceTile extends StatelessWidget {
         'rgb_light' => MdiIcons.lightbulbOnOutline,
         'rgb_strip' => MdiIcons.ledStripVariant,
         'temperature_humidity_sensor' => MdiIcons.thermometerWater,
+        'temperature_sensor' => MdiIcons.thermometer,
         'leak_sensor' => MdiIcons.waterAlertOutline,
         'motion_sensor' => MdiIcons.motionSensor,
+        'contact_sensor' => MdiIcons.doorOpen,
         'thermostat' => MdiIcons.thermostat,
         'socket' => MdiIcons.powerSocketEu,
+        'switch' => MdiIcons.lightSwitch,
         _ => MdiIcons.motionSensor,
       };
 
   @override
   Widget build(BuildContext context) {
     final asset = DeviceAssetCatalog.forType(device.type);
-    final isEnvironment = device.type == 'temperature_humidity_sensor';
+    final isEnvironment = device.type == 'temperature_humidity_sensor' ||
+        device.type == 'temperature_sensor';
     final isLeak = device.type == 'leak_sensor';
     final isMotion = device.type == 'motion_sensor';
+    final isContact = device.type == 'contact_sensor';
     final status = isEnvironment
-        ? '${device.temperature.toStringAsFixed(1)}°C · ${device.humidity.round()}%'
+        ? device.type == 'temperature_sensor'
+            ? '${device.temperature.toStringAsFixed(1)}°C'
+            : '${device.temperature.toStringAsFixed(1)}°C · ${device.humidity.round()}%'
         : isLeak
             ? (device.isOn ? 'Обнаружена протечка' : 'Протечки нет')
-            : isMotion
-                ? (device.isOn ? 'Есть движение' : 'Движения нет')
-                : device.isOn
-                    ? I18n.t('Включено', 'Кутэмын', 'On')
-                    : I18n.t('Выключено', 'Куштэмын', 'Off');
+            : isContact
+                ? (device.isOn
+                    ? I18n.t('Открыто', 'Усьтэмын', 'Open')
+                    : I18n.t('Закрыто', 'Тупатэмын', 'Closed'))
+                : isMotion
+                    ? (device.isOn ? 'Есть движение' : 'Движения нет')
+                    : device.isOn
+                        ? I18n.t('Включено', 'Кутэмын', 'On')
+                        : I18n.t('Выключено', 'Куштэмын', 'Off');
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
@@ -901,7 +1033,7 @@ class _SensorStatusTile extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: (active ? _accent : Colors.white54).withValues(alpha: .14),
+              color: (active ? _accent : Colors.white54).withOpacity(.14),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Icon(icon, color: active ? _accent : Colors.white54),
@@ -1347,7 +1479,7 @@ BoxDecoration _cardDecoration(BuildContext context, {bool active = false}) =>
               ? const Color(0xFFFF8A2A)
               : Theme.of(context).dividerColor),
       boxShadow: active
-          ? [BoxShadow(color: _accent.withValues(alpha: .25), blurRadius: 20)]
+          ? [BoxShadow(color: _accent.withOpacity(.25), blurRadius: 20)]
           : null,
     );
 

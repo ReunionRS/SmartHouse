@@ -27,10 +27,32 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
       HA_PAIRING_SECRET: ${HA_PAIRING_SECRET}
-      CORS_ORIGIN: http://localhost:5173
-      HA_WEB_APP_URL: http://localhost:5173
+      CORS_ORIGIN: http://localhost:5173,http://localhost:8080
+      HA_WEB_APP_URL: http://localhost:8080
+      HA_INTERNAL_BASE_URL: http://smarthouse-ha:8123
+      AI_ENABLED: ${AI_ENABLED:-true}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-http://host.docker.internal:11434}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen2.5:7b}
+      AI_MAX_TOOL_ROUNDS: ${AI_MAX_TOOL_ROUNDS:-6}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-120000}
+      AI_CONFIRMATION_TTL_SECONDS: ${AI_CONFIRMATION_TTL_SECONDS:-120}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "4000:4000"
+    volumes:
+      - smart-house-uploads:/app/uploads
+
+  smarthouse-web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
 
   smarthouse-ha:
     build: ./ha
@@ -43,9 +65,11 @@ services:
       SMART_HOUSE_HUB_ID: ${SMART_HOUSE_HUB_ID:-smarthouse-dev-hub}
       HA_PAIRING_SECRET: ${HA_PAIRING_SECRET}
     ports:
+      # Service/admin endpoint. The customer-facing UI is SmartHouse on :8080.
       - "8123:8123"
     volumes:
       - ./ha/config:/config
 
 volumes:
   smart-house-postgres:
+  smart-house-uploads:
