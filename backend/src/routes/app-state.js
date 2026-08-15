@@ -4,7 +4,7 @@ import { asyncRoute } from '../lib/http.js';
 import { authRequired } from '../middleware/auth.js';
 
 const router = Router();
-const allowedKeys = new Set(['rooms', 'room_devices', 'room_types', 'scenes']);
+const allowedKeys = new Set(['rooms', 'room_devices', 'room_types', 'scenes', 'local_automations', 'dashboard_settings']);
 
 router.use(authRequired);
 

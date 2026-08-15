@@ -3,9 +3,10 @@ import test from 'node:test';
 import { isOpening, normalizeEntity } from '../src/ai/home-assistant-normalizer.js';
 import { OllamaProvider } from '../src/ai/providers/ollama-provider.js';
 import { requiresClimateConfirmation } from '../src/ai/tools/ai-tools.js';
-import { exactToolResponse, inferReadTool } from '../src/ai/ai-orchestrator.js';
+import { exactToolResponse, inferAutomationTool, inferReadTool } from '../src/ai/ai-orchestrator.js';
 import { AiOrchestrator } from '../src/ai/ai-orchestrator.js';
 import { getPublicWeather } from '../src/ai/public-data/weather-service.js';
+import { searchMarketplaces } from '../src/ai/public-data/marketplace-search-service.js';
 
 test('HA entity normalization only exposes whitelisted attributes', () => {
   const entity = normalizeEntity({
@@ -70,6 +71,44 @@ test('assistant answers own-name question from local profile without LLM', async
     message: 'Как меня зовут?',
   });
   assert.equal(result.message, 'В вашем профиле указано имя: Вася.');
+});
+
+test('assistant answers profile questions in selected English language', async () => {
+  const provider = {
+    chatWithTools: async () => assert.fail('LLM must not be called for profile name'),
+  };
+  const assistant = new AiOrchestrator({ provider });
+  const result = await assistant.chat({
+    userId: 'user',
+    userName: 'Vasya',
+    conversationId: 'conversation',
+    history: [],
+    message: 'What is my name?',
+    language: 'en',
+  });
+  assert.equal(result.message, 'Your SmartHouse profile name is Vasya.');
+});
+
+test('selected English language is explicitly passed to Qwen', async () => {
+  let sentMessages;
+  const assistant = new AiOrchestrator({
+    provider: {
+      chatWithTools: async (messages) => {
+        sentMessages = messages;
+        return { message: { role: 'assistant', content: 'Hello!' } };
+      },
+    },
+  });
+  const result = await assistant.chat({
+    userId: 'user',
+    conversationId: 'conversation',
+    history: [],
+    message: 'Tell me about SmartHouse',
+    language: 'en',
+  });
+  assert.equal(result.message, 'Hello!');
+  assert.ok(sentMessages.some((item) =>
+    item.role === 'system' && /entirely in English/u.test(item.content)));
 });
 
 test('assistant never infers the user location from weather history', async () => {
@@ -160,6 +199,68 @@ test('assistant rejects unrelated culinary questions without LLM', async () => {
   });
   assert.match(result.message, /только с умным домом/iu);
   assert.doesNotMatch(result.message, /вкусное блюдо|мясной фарш/iu);
+});
+
+test('assistant offers relevant smart-home purchasing help without LLM refusal', async () => {
+  const provider = {
+    chatWithTools: async () => assert.fail('Initial buying clarification must be deterministic'),
+  };
+  const assistant = new AiOrchestrator({ provider });
+  const result = await assistant.chat({
+    userId: 'user',
+    conversationId: 'conversation',
+    history: [],
+    message: 'Хочу купить новые датчики, поможешь?',
+  });
+  assert.match(result.message, /помогу подобрать/iu);
+  assert.match(result.message, /протокол/iu);
+  assert.match(result.message, /бюджет/iu);
+  assert.doesNotMatch(result.message, /не могу помочь с покупками/iu);
+});
+
+test('marketplace search only requests allowlisted marketplace URLs', async () => {
+  const requested = [];
+  const result = await searchMarketplaces('Zigbee датчик протечки', {
+    fetchImpl: async (url) => {
+      requested.push(new URL(url));
+      return {
+        ok: true,
+        url,
+        text: async () => '<html><script type="application/ld+json">' +
+          '{"@type":"Product","name":"Test sensor","url":"/product/1",' +
+          '"offers":{"price":"1990","priceCurrency":"RUB"}}</script></html>',
+      };
+    },
+  });
+  assert.equal(requested.length, 3);
+  assert.deepEqual(
+    requested.map((url) => url.hostname).sort(),
+    ['market.yandex.ru', 'www.ozon.ru', 'www.wildberries.ru'].sort(),
+  );
+  assert.equal(result.results.length, 3);
+  assert.equal(result.results[0].price, '1990');
+  assert.match(result.results[0].url, /^https:\/\//u);
+});
+
+test('detailed device-shopping request is routed to marketplace search', () => {
+  assert.deepEqual(
+    inferReadTool('Найди Zigbee датчик протечки до 3000 рублей'),
+    [
+      'search_marketplaces',
+      { query: 'Найди Zigbee датчик протечки до 3000 рублей' },
+    ],
+  );
+});
+
+test('blocked marketplaces produce links instead of invented products', () => {
+  const response = exactToolResponse('search_marketplaces', {
+    results: [],
+    sources: [
+      { marketplace: 'Ozon', search_url: 'https://www.ozon.ru/search/?text=zigbee' },
+    ],
+  }, true);
+  assert.match(response, /не буду придумывать/iu);
+  assert.match(response, /https:\/\/www\.ozon\.ru/iu);
 });
 
 test('assistant does not predict the outcome of an armed conflict', async () => {
@@ -331,4 +432,25 @@ test('weather response is deterministic and does not ask the LLM to reinterpret 
   assert.match(result, /морось/u);
   assert.match(result, /24\.9 °C/u);
   assert.doesNotMatch(result, /мороз|получение данных/iu);
+});
+
+test('two-time lighting request is routed to a scheduled automation draft', () => {
+  const inferred = inferAutomationTool(
+    'Добавь автоматизацию: в гостиной лампа включается в 5:00 утра и выключается в 5:00 вечера',
+  );
+  assert.deepEqual(inferred, ['prepare_scheduled_automation_draft', {
+    name: 'Расписание освещения',
+    room: 'гостиной',
+    device: 'лампа',
+    turn_on_at: '05:00',
+    turn_off_at: '17:00',
+  }]);
+});
+
+test('voice-style schedule request works without the word automation', () => {
+  const inferred = inferAutomationTool(
+    'Когда время 5:00 утра лампа включается, когда время 5:00 вечера она выключается, лампа в гостиной',
+  );
+  assert.equal(inferred?.[0], 'prepare_scheduled_automation_draft');
+  assert.equal(inferred?.[1].turn_off_at, '17:00');
 });

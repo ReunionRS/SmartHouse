@@ -2,6 +2,8 @@ import { haRest } from '../../services/home-assistant.js';
 import { loadHomeSnapshot } from '../ha-context.js';
 import { isBattery, isOpening, numericState } from '../home-assistant-normalizer.js';
 import { getPublicWeather } from '../public-data/weather-service.js';
+import { searchMarketplaces } from '../public-data/marketplace-search-service.js';
+import { pool } from '../../db.js';
 
 const functionTool = (name, description, properties = {}, required = []) => ({
   type: 'function',
@@ -13,11 +15,22 @@ export const aiToolDefinitions = [
   functionTool('get_weather', 'Получить актуальную погоду из разрешённого публичного источника', {
     location: stringArg('Название города или населённого пункта'),
   }, ['location']),
+  functionTool(
+    'search_marketplaces',
+    'Найти устройства умного дома на разрешённых российских маркетплейсах. Использовать для актуального подбора датчиков и оборудования; не придумывать товары, цены или наличие.',
+    {
+      query: stringArg(
+        'Поисковый запрос с типом устройства и протоколом, например: Zigbee датчик протечки Home Assistant',
+      ),
+    },
+    ['query'],
+  ),
   functionTool('get_home_summary', 'Получить компактную актуальную сводку дома'),
   functionTool('get_rooms', 'Получить комнаты дома'),
   functionTool('get_devices', 'Получить устройства с необязательным фильтром по domain или комнате', {
     domain: stringArg('Необязательный HA domain, например light или sensor'),
     room: stringArg('Необязательное название или id комнаты'),
+    favorites_only: { type: 'boolean', description: 'Вернуть только устройства, добавленные в избранное' },
   }),
   functionTool('get_room_state', 'Получить актуальные устройства и датчики комнаты',
     { room: stringArg('Название или id комнаты') }, ['room']),
@@ -66,9 +79,28 @@ export const aiToolDefinitions = [
     action_devices: { type: 'array', items: { type: 'string' }, description: 'Названия или entity id устройств действия' },
     action: { type: 'string', enum: ['turn_on', 'turn_off', 'flash'], description: 'Безопасное действие' },
   }, ['name', 'description', 'trigger_device', 'trigger_state', 'action_devices', 'action']),
+  functionTool('prepare_scheduled_automation_draft', 'Подготовить черновик расписания включения и выключения устройства', {
+    name: stringArg('Название автоматизации'),
+    room: stringArg('Название комнаты'),
+    device: stringArg('Название устройства, например лампа'),
+    turn_on_at: stringArg('Время включения в формате HH:mm'),
+    turn_off_at: stringArg('Время выключения в формате HH:mm'),
+  }, ['name', 'room', 'device']),
 ];
 
 const comparable = (value) => String(value || '').trim().toLocaleLowerCase('ru-RU');
+const loadLocalHomeState = async (userId) => {
+  const { rows } = await pool.query(
+    `SELECT state_key,value FROM user_app_state
+     WHERE user_id=$1 AND state_key IN ('rooms','room_devices')`,
+    [userId],
+  );
+  const state = Object.fromEntries(rows.map((item) => [item.state_key, item.value]));
+  return {
+    rooms: Array.isArray(state.rooms) ? state.rooms : [],
+    devices: Array.isArray(state.room_devices) ? state.room_devices : [],
+  };
+};
 const periodRange = (raw) => {
   const allowed = { '1h': 1, '6h': 6, '12h': 12, '24h': 24, '7d': 168 };
   const period = Object.hasOwn(allowed, raw) ? raw : '12h';
@@ -126,6 +158,7 @@ const callAndConfirm = async (userId, entity, service, data = {}) => {
 
 export const executeAiTool = async ({ userId, name, args = {}, confirmed = false }) => {
   if (name === 'get_weather') return getPublicWeather(args.location);
+  if (name === 'search_marketplaces') return searchMarketplaces(args.query);
   const snapshot = await loadHomeSnapshot(userId);
   const { entities, rooms } = snapshot;
   const physicalDomains = new Set([
@@ -136,12 +169,48 @@ export const executeAiTool = async ({ userId, name, args = {}, confirmed = false
     physicalDomains.has(item.domain) && isPhysicalEntity(item));
   if (name === 'get_rooms') return { rooms };
   if (name === 'get_devices') {
-    const room = args.room ? findRoom(rooms, args.room) : null;
+    const local = await loadLocalHomeState(userId);
+    const allRooms = [
+      ...rooms,
+      ...local.rooms.map((item) => ({
+        ...item,
+        id: item.id || item.area_id,
+        name: item.name || item.type_id || item.typeId,
+      })),
+    ];
+    const room = args.room ? findRoom(allRooms, args.room) : null;
     if (args.room && !room) return { error: 'ROOM_NOT_FOUND' };
     const domain = comparable(args.domain);
+    const localDevices = local.devices.map((item) => {
+      const roomId = String(item.room_id || item.roomId || '');
+      const type = String(item.type || item.type_id || 'device');
+      const mappedDomain = ['rgb_light', 'rgb_strip'].includes(type)
+        ? 'light'
+        : type === 'socket'
+          ? 'switch'
+          : type;
+      return {
+        entity_id: String(item.id || ''),
+        name: String(item.name || item.title || type),
+        domain: mappedDomain,
+        state: item.is_on === true ? 'on' : 'off',
+        available: true,
+        room_id: roomId,
+        room_name: allRooms.find((candidate) => String(candidate.id) === roomId)?.name || roomId,
+        source: 'smart_house',
+        is_favorite: item.is_favorite === true,
+        linked_to_home_assistant: String(item.id || '').includes('.'),
+      };
+    });
+    const combined = [...physicalEntities];
+    for (const item of localDevices) {
+      if (!combined.some((existing) => existing.entity_id === item.entity_id)) combined.push(item);
+    }
     return {
-      devices: physicalEntities.filter((item) =>
-        (!domain || item.domain === domain) && (!room || item.room_id === room.id)),
+      devices: combined.filter((item) =>
+        (!domain || item.domain === domain)
+        && (!room || item.room_id === room.id)
+        && (args.favorites_only !== true || item.is_favorite === true)),
     };
   }
   if (name === 'get_lights_state') return { lights: entities.filter((item) => item.domain === 'light') };
@@ -267,6 +336,78 @@ export const executeAiTool = async ({ userId, name, args = {}, confirmed = false
           state: args.trigger_state === 'off' ? 'off' : 'on',
         },
         actions: actionDevices.map((item) => ({ ...item, action })),
+        status: 'draft',
+      },
+    };
+  }
+  if (name === 'prepare_scheduled_automation_draft') {
+    let room = findRoom(rooms, args.room);
+    let roomTargets = room ? physicalEntities.filter((item) =>
+      item.room_id === room.id && ['light', 'switch'].includes(item.domain)) : [];
+    let resolved = roomTargets.length === 1
+      ? { entity: roomTargets[0] }
+      : resolveOne(roomTargets, args.device, ['light', 'switch']);
+    if (!room || resolved.error) {
+      const { rows } = await pool.query(
+        `SELECT state_key,value FROM user_app_state
+         WHERE user_id=$1 AND state_key IN ('rooms','room_devices')`,
+        [userId],
+      );
+      const state = Object.fromEntries(rows.map((item) => [item.state_key, item.value]));
+      const localRooms = Array.isArray(state.rooms) ? state.rooms : [];
+      const localDevices = Array.isArray(state.room_devices) ? state.room_devices : [];
+      const localRoom = findRoom(localRooms.map((item) => ({
+        ...item,
+        id: item.id || item.area_id,
+        name: item.name || item.type_id || item.typeId,
+      })), args.room);
+      const effectiveRoom = localRoom || room;
+      if (effectiveRoom) {
+        const localTargets = localDevices.filter((item) =>
+          String(item.room_id || item.roomId) === String(effectiveRoom.id)
+          && ['light', 'rgb_light', 'rgb_strip', 'switch', 'socket'].includes(String(item.type || item.type_id)));
+        const wanted = comparable(args.device);
+        const localDevice = localTargets.length === 1 ? localTargets[0] : localTargets.find((item) => {
+          const label = comparable(item.name || item.title);
+          return label === wanted || label.includes(wanted) || wanted.includes(label);
+        });
+        if (localDevice) {
+          room = effectiveRoom;
+          resolved = { entity: {
+            entity_id: String(localDevice.id),
+            name: String(localDevice.name || localDevice.title || args.device),
+            domain: ['switch', 'socket'].includes(String(localDevice.type || localDevice.type_id)) ? 'switch' : 'light',
+            local: true,
+          } };
+        }
+      }
+    }
+    if (!room) return { error: 'ROOM_NOT_FOUND' };
+    if (resolved.error) return { ...resolved, field: 'device' };
+    const normalizeTime = (value) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''))
+      ? String(value) : null;
+    const turnOnAt = normalizeTime(args.turn_on_at);
+    const turnOffAt = normalizeTime(args.turn_off_at);
+    if (!turnOnAt && !turnOffAt) return { error: 'INVALID_TIME' };
+    const target = {
+      entity_id: resolved.entity.entity_id,
+      name: resolved.entity.name,
+      domain: resolved.entity.domain,
+      local: resolved.entity.local === true,
+    };
+    return {
+      type: 'automation_draft',
+      draft: {
+        name: String(args.name || `Расписание: ${resolved.entity.name}`).slice(0, 100),
+        description: [
+          `${resolved.entity.name} в комнате «${room.name}»`,
+          turnOnAt && `включение в ${turnOnAt}`,
+          turnOffAt && `выключение в ${turnOffAt}`,
+        ].filter(Boolean).join(', ') + '.',
+        automations: [
+          turnOnAt && { name: `${resolved.entity.name}: включение`, trigger: { type: 'time', at: turnOnAt }, actions: [{ ...target, action: 'turn_on' }] },
+          turnOffAt && { name: `${resolved.entity.name}: выключение`, trigger: { type: 'time', at: turnOffAt }, actions: [{ ...target, action: 'turn_off' }] },
+        ].filter(Boolean),
         status: 'draft',
       },
     };

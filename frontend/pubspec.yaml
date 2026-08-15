@@ -22,7 +22,7 @@ dependencies:
   multicast_dns: ^0.3.2+7
   # 8.0.7 fixes plugin metadata while remaining compatible with Firebase's
   # web 0.5.x dependency used by this project.
-  file_picker: 8.0.7
+  file_picker: ^11.0.3
   url_launcher: ^6.3.1
   app_links: 6.4.0
   flutter_local_notifications: ^17.2.3
@@ -30,6 +30,7 @@ dependencies:
   google_fonts: ^6.2.1
   material_design_icons_flutter: 7.0.7296
   flutter_markdown_plus: ^1.0.0+1
+  speech_to_text: ^7.4.0
 
 dependency_overrides:
   flutter_plugin_android_lifecycle: 2.0.20

@@ -50,6 +50,10 @@ router.post('/chat', asyncRoute(async (req, res) => {
   const message = String(req.body.message || '').trim();
   if (!message || message.length > 2000) return res.status(400).json({ error: 'Сообщение должно содержать от 1 до 2000 символов' });
   const homeId = String(req.body.homeId || '').slice(0, 100);
+  const requestedLanguage = String(req.body.language || '').toLowerCase();
+  const language = ['ru', 'en', 'udm', 'tt'].includes(requestedLanguage)
+    ? requestedLanguage
+    : '';
   const conversationId = await ensureConversation({ id: String(req.body.conversationId || '') || null, userId: req.user.id, homeId });
   const history = await loadRecentMessages({ conversationId, userId: req.user.id });
   await saveMessage({ conversationId, role: 'user', content: message });
@@ -60,6 +64,7 @@ router.post('/chat', asyncRoute(async (req, res) => {
     conversationId,
     history,
     message,
+    language,
   });
   await saveMessage({ conversationId, role: 'assistant', content: answer.message, responseType: answer.type });
   res.json({ conversationId, message: answer.message, type: answer.type, data: answer.data, actions: [], suggestions: [] });

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -8,8 +9,13 @@ import '../core/room_localization.dart';
 import '../models/session_models.dart';
 import '../models/home_assistant_room.dart';
 import '../models/local_room_device.dart';
+import '../models/home_dashboard.dart';
+import '../models/smart_scene.dart';
 import '../services/auth_service.dart';
 import '../services/room_service.dart';
+import '../services/home_dashboard_service.dart';
+import '../services/scene_service.dart';
+import '../features/settings/home_dashboard_settings_page.dart';
 import '../features/settings/profile_page.dart';
 import '../features/assistant/ai_chat_page.dart';
 import '../features/notifications/smart_notifications_page.dart';
@@ -65,20 +71,122 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
   int index = 0;
   int tabSlideDirection = 1;
   late String userFio = widget.session.fio;
+  late String userAvatarUrl = widget.session.avatarUrl;
   String? error;
   List<HomeAssistantRoom> rooms = const [];
   List<LocalRoomDevice> localDevices = const [];
   bool initialHomeLoading = true;
   final RoomService roomService = RoomService();
+  final HomeDashboardService dashboardService = HomeDashboardService();
+  final SceneService sceneService = SceneService();
+  DashboardPreferences dashboardPreferences =
+      const DashboardPreferences(enabled: DashboardPreferences.defaultIds);
+  List<DashboardMetric> dashboardMetrics = const [];
+  bool dashboardLoading = true;
+  List<SmartScene> homeScenes = const [];
+  Timer? roomsRefreshTimer;
+  bool roomsRefreshInProgress = false;
 
   @override
   void initState() {
     super.initState();
     load();
+    roomsRefreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (index == 1) refreshRoomsSilently();
+    });
+  }
+
+  @override
+  void dispose() {
+    roomsRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> refreshRoomsSilently() async {
+    if (roomsRefreshInProgress) return;
+    roomsRefreshInProgress = true;
+    try {
+      await loadRoomsAndDevices();
+    } finally {
+      roomsRefreshInProgress = false;
+    }
   }
 
   Future<void> load() async {
-    await Future.wait([loadEntities(), loadRoomsAndDevices()]);
+    await Future.wait([
+      loadEntities(),
+      loadRoomsAndDevices(),
+      loadDashboard(),
+      loadHomeScenes(),
+    ]);
+  }
+
+  Future<void> loadHomeScenes() async {
+    final values = await Future.wait([
+      sceneService.load(widget.session.id),
+      sceneService.loadPresets(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      homeScenes = [
+        ...values[1],
+        ...values[0].where((scene) => scene.triggerType == 'manual'),
+      ];
+    });
+  }
+
+  Future<void> runHomeScene(SmartScene scene) async {
+    try {
+      await sceneService.run(widget.session.id, scene);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Сцена «${scene.name}» запущена')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(error.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
+  }
+
+  Future<void> loadDashboard() async {
+    try {
+      final preferences =
+          await dashboardService.loadPreferences(widget.session.id);
+      final metrics = await dashboardService.loadMetrics(preferences);
+      if (!mounted) return;
+      setState(() {
+        dashboardPreferences = preferences;
+        dashboardMetrics = metrics;
+        dashboardLoading = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => dashboardLoading = false);
+    }
+  }
+
+  Future<void> openDashboardSettings() async {
+    List<DashboardMetric> availableMetrics = dashboardMetrics;
+    try {
+      availableMetrics = await dashboardService.loadMetrics(
+        const DashboardPreferences(enabled: DashboardPreferences.defaultIds),
+      );
+    } catch (_) {}
+    if (!mounted) return;
+    final result = await Navigator.of(context).push<DashboardPreferences>(
+      MaterialPageRoute(
+        builder: (_) => HomeDashboardSettingsPage(
+          preferences: dashboardPreferences,
+          availableIds: availableMetrics.map((item) => item.id).toSet(),
+        ),
+      ),
+    );
+    if (result == null) return;
+    setState(() => dashboardPreferences = result);
+    await dashboardService.savePreferences(result);
+    await loadDashboard();
   }
 
   void openAiAssistant() {
@@ -172,6 +280,23 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
         slideUpRoute(const SmartNotificationsPage()),
       );
 
+  void openUserProfile() => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => MyProfilePage(
+            session: AppSession(
+              id: widget.session.id,
+              token: widget.session.token,
+              email: widget.session.email,
+              fio: userFio,
+              avatarUrl: userAvatarUrl,
+            ),
+            auth: widget.auth,
+            onNameChanged: (value) => setState(() => userFio = value),
+            onAvatarChanged: (value) => setState(() => userAvatarUrl = value),
+          ),
+        ),
+      );
+
   Future<void> editFavorites() async {
     final selected = await showModalBottomSheet<Set<String>>(
       context: context,
@@ -252,7 +377,7 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
             token: widget.session.token,
             email: widget.session.email,
             fio: userFio,
-            avatarUrl: widget.session.avatarUrl,
+            avatarUrl: userAvatarUrl,
           ),
           localDevices: localDevices,
           rooms: rooms,
@@ -262,6 +387,17 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
           onOpenRoom: openRoom,
           onOpenRooms: () => setState(() => index = 1),
           onOpenEvents: openNotifications,
+          onOpenProfile: openUserProfile,
+          dashboardMetrics: dashboardMetrics,
+          dashboardLoading: dashboardLoading,
+          dashboardVisible: dashboardPreferences.visible,
+          onConfigureDashboard: openDashboardSettings,
+          scenes: homeScenes,
+          onOpenScenes: () => setState(() => index = 3),
+          onRunScene: runHomeScene,
+          avatarUrl: userAvatarUrl.isEmpty
+              ? ''
+              : widget.auth.resolveFileUrl(userAvatarUrl),
           onEditFavorites: editFavorites),
       _RoomsPage(
           rooms: rooms,
@@ -273,22 +409,27 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
         userId: widget.session.id,
         devices: localDevices,
         rooms: rooms,
-        onDevicesChanged: loadRoomsAndDevices,
+        onDevicesChanged: () async {
+          await Future.wait([loadRoomsAndDevices(), loadHomeScenes()]);
+        },
+        view: ScenesView.automations,
       ),
-      _EmptyPage(
-          title: I18n.t('События', 'Луэмъёс', 'Events'),
-          text: I18n.t(
-              'Здесь появятся важные уведомления и история дома.',
-              'Татын кулэ иворъёс но корка историез потоз.',
-              'Important notifications and home history will appear here.'),
-          icon: Icons.notifications_none_rounded),
+      ScenesPage(
+        userId: widget.session.id,
+        devices: localDevices,
+        rooms: rooms,
+        onDevicesChanged: () async {
+          await Future.wait([loadRoomsAndDevices(), loadHomeScenes()]);
+        },
+        view: ScenesView.scenes,
+      ),
       ProfilePage(
         session: AppSession(
           id: widget.session.id,
           token: widget.session.token,
           email: widget.session.email,
           fio: userFio,
-          avatarUrl: widget.session.avatarUrl,
+          avatarUrl: userAvatarUrl,
         ),
         auth: widget.auth,
         isDarkMode: widget.isDarkMode,
@@ -300,6 +441,8 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
         onLogout: widget.onLogout,
         onReconnectHub: widget.onReconnectHub,
         onNameChanged: (value) => setState(() => userFio = value),
+        onAvatarChanged: (value) => setState(() => userAvatarUrl = value),
+        onOpenDashboardSettings: openDashboardSettings,
       ),
     ];
     return Scaffold(
@@ -392,10 +535,13 @@ class _SmartHomeShellState extends State<SmartHomeShell> {
       ]),
       bottomNavigationBar: _GlassDock(
         index: index,
-        onChanged: (value) => setState(() {
-          tabSlideDirection = value > index ? 1 : -1;
-          index = value;
-        }),
+        onChanged: (value) {
+          setState(() {
+            tabSlideDirection = value > index ? 1 : -1;
+            index = value;
+          });
+          if (value == 1) refreshRoomsSilently();
+        },
         onAssistant: openAiAssistant,
       ),
     );
@@ -413,6 +559,15 @@ class _HomePage extends StatelessWidget {
       required this.onOpenRoom,
       required this.onOpenRooms,
       required this.onOpenEvents,
+      required this.onOpenProfile,
+      required this.dashboardMetrics,
+      required this.dashboardLoading,
+      required this.dashboardVisible,
+      required this.onConfigureDashboard,
+      required this.scenes,
+      required this.onOpenScenes,
+      required this.onRunScene,
+      required this.avatarUrl,
       required this.onEditFavorites});
   final AppSession session;
   final List<LocalRoomDevice> localDevices;
@@ -423,6 +578,15 @@ class _HomePage extends StatelessWidget {
   final void Function(HomeAssistantRoom room, int index) onOpenRoom;
   final VoidCallback onOpenRooms;
   final VoidCallback onOpenEvents;
+  final VoidCallback onOpenProfile;
+  final List<DashboardMetric> dashboardMetrics;
+  final bool dashboardLoading;
+  final bool dashboardVisible;
+  final VoidCallback onConfigureDashboard;
+  final List<SmartScene> scenes;
+  final VoidCallback onOpenScenes;
+  final ValueChanged<SmartScene> onRunScene;
+  final String avatarUrl;
   final VoidCallback onEditFavorites;
 
   String get firstName {
@@ -460,6 +624,12 @@ class _HomePage extends StatelessWidget {
               const Spacer(),
               _IconButton(
                   icon: Icons.notifications_none_rounded, onTap: onOpenEvents),
+              const SizedBox(width: 9),
+              _UserAvatarButton(
+                avatarUrl: avatarUrl,
+                name: session.fio,
+                onTap: onOpenProfile,
+              ),
             ]),
             const SizedBox(height: 18),
             const Text('SMART HOUSE', style: _kicker),
@@ -480,6 +650,14 @@ class _HomePage extends StatelessWidget {
                         'Устройстваос уг герӟаськы',
                         'Devices are not connected yet'),
                 style: TextStyle(color: _secondary(context), fontSize: 13)),
+            if (dashboardVisible) ...[
+              const SizedBox(height: 20),
+              _DashboardSummary(
+                metrics: dashboardMetrics,
+                loading: dashboardLoading,
+                onConfigure: onConfigureDashboard,
+              ),
+            ],
             const SizedBox(height: 20),
             Row(children: [
               Expanded(
@@ -493,11 +671,13 @@ class _HomePage extends StatelessWidget {
                     : I18n.t('Изменить', 'Воштыны', 'Edit')),
               ),
             ]),
+            const SizedBox(height: 8),
             if (favoriteDevices.isEmpty)
               _AddFavoriteCard(onTap: onEditFavorites)
             else
               GridView.builder(
                 shrinkWrap: true,
+                padding: EdgeInsets.zero,
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: favoriteDevices.length,
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -521,31 +701,254 @@ class _HomePage extends StatelessWidget {
                 },
               ),
             const SizedBox(height: 8),
-            GestureDetector(
-              onTap: rooms.isEmpty ? null : onOpenRooms,
-              child: _SectionTitle(I18n.t('Комнаты', 'Комнатъёс', 'Rooms')),
-            ),
+            Row(children: [
+              Expanded(
+                child: _SectionTitle(I18n.t('Комнаты', 'Комнатъёс', 'Rooms')),
+              ),
+              if (rooms.isNotEmpty)
+                TextButton.icon(
+                  onPressed: onOpenRooms,
+                  label: Text(I18n.t('Все', 'Ваньмыз', 'See all')),
+                  icon: const Icon(Icons.chevron_right_rounded, size: 18),
+                  iconAlignment: IconAlignment.end,
+                ),
+            ]),
+            const SizedBox(height: 8),
             if (rooms.isEmpty)
               _RoomsEmptyState(onAdd: onAddRoom)
             else
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: rooms.take(6).length,
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2,
-                  mainAxisExtent: 128,
-                  crossAxisSpacing: 9,
-                  mainAxisSpacing: 9,
+              ...rooms.take(4).toList().asMap().entries.map(
+                    (entry) => Padding(
+                      padding: const EdgeInsets.only(bottom: 11),
+                      child: _RoomCard(
+                        room: entry.value,
+                        roomIndex: entry.key,
+                        compact: true,
+                        devices: localDevices
+                            .where(
+                                (device) => device.roomId == entry.value.areaId)
+                            .toList(growable: false),
+                        onTap: () => onOpenRoom(entry.value, entry.key),
+                      ),
+                    ),
+                  ),
+            if (scenes.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(
+                  child: _SectionTitle(I18n.t('Сцены', 'Сценарийёс', 'Scenes')),
                 ),
-                itemBuilder: (_, i) => _RoomCard(
-                  room: rooms[i],
-                  roomIndex: i,
-                  compact: true,
-                  onTap: () => onOpenRoom(rooms[i], i),
+                TextButton.icon(
+                  onPressed: onOpenScenes,
+                  label: Text(I18n.t('Все', 'Ваньмыз', 'See all')),
+                  icon: const Icon(Icons.chevron_right_rounded, size: 18),
+                  iconAlignment: IconAlignment.end,
                 ),
-              ),
+              ]),
+              const SizedBox(height: 8),
+              ...scenes.take(3).map(
+                    (scene) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: _HomeSceneCard(
+                        scene: scene,
+                        onRun: () => onRunScene(scene),
+                      ),
+                    ),
+                  ),
+            ],
           ]),
+    );
+  }
+}
+
+class _HomeSceneCard extends StatelessWidget {
+  const _HomeSceneCard({required this.scene, required this.onRun});
+
+  final SmartScene scene;
+  final VoidCallback onRun;
+
+  IconData get icon => switch (scene.id) {
+        'preset_home' => Icons.home_rounded,
+        'preset_away' => Icons.directions_walk_rounded,
+        'preset_morning' => Icons.wb_sunny_rounded,
+        'preset_night' => Icons.bedtime_rounded,
+        'preset_movie' => Icons.movie_rounded,
+        'preset_vacation' => Icons.flight_takeoff_rounded,
+        _ => Icons.auto_awesome_rounded,
+      };
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.fromLTRB(13, 12, 10, 12),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface.withOpacity(.82),
+          borderRadius: BorderRadius.circular(21),
+          border:
+              Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        ),
+        child: Row(children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: _orange.withOpacity(.14),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(icon, color: _orange),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(scene.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: _foreground(context),
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 3),
+              Text(
+                scene.triggerType == 'preset'
+                    ? scene.triggerCondition
+                    : I18n.t('Запуск одним касанием', 'Одӥг басылӥськонэн',
+                        'Run with one tap'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: _secondary(context), fontSize: 11),
+              ),
+            ]),
+          ),
+          IconButton.filledTonal(
+            tooltip: I18n.t('Запустить', 'Куттыны', 'Run'),
+            onPressed: scene.enabled ? onRun : null,
+            icon: const Icon(Icons.play_arrow_rounded),
+            color: _orange,
+          ),
+        ]),
+      );
+}
+
+class _DashboardSummary extends StatelessWidget {
+  const _DashboardSummary({
+    required this.metrics,
+    required this.loading,
+    required this.onConfigure,
+  });
+
+  final List<DashboardMetric> metrics;
+  final bool loading;
+  final VoidCallback onConfigure;
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const SizedBox(
+        height: 112,
+        child: Center(
+          child: SizedBox(
+            width: 25,
+            height: 25,
+            child: CircularProgressIndicator(strokeWidth: 2.4, color: _orange),
+          ),
+        ),
+      );
+    }
+    if (metrics.isEmpty) {
+      return InkWell(
+        onTap: onConfigure,
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(24),
+            border:
+                Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+          ),
+          child: Row(children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: const BoxDecoration(
+                  color: Color(0xFFFFE8D7), shape: BoxShape.circle),
+              child: const Icon(Icons.tune_rounded, color: _orange),
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Настроить показатели',
+                        style: TextStyle(
+                            color: _foreground(context),
+                            fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Text('Подключите датчики или выберите доступные данные',
+                        style: TextStyle(
+                            color: _secondary(context), fontSize: 11)),
+                  ]),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: _orange),
+          ]),
+        ),
+      );
+    }
+    return SizedBox(
+      height: 124,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: metrics.length + 1,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (_, index) {
+          if (index == metrics.length) {
+            return InkWell(
+              onTap: onConfigure,
+              borderRadius: BorderRadius.circular(24),
+              child: Container(
+                width: 72,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant),
+                ),
+                child: const Icon(Icons.tune_rounded, color: _orange),
+              ),
+            );
+          }
+          final item = metrics[index];
+          return Container(
+            width: 116,
+            padding: const EdgeInsets.fromLTRB(16, 15, 12, 13),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .outlineVariant
+                      .withOpacity(.55)),
+            ),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(item.icon, color: _orange, size: 21),
+              const Spacer(),
+              Text(item.value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: _foreground(context),
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(item.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: _secondary(context), fontSize: 10)),
+            ]),
+          );
+        },
+      ),
     );
   }
 }
@@ -935,12 +1338,14 @@ class _RoomCard extends StatelessWidget {
     required this.roomIndex,
     required this.onTap,
     this.compact = false,
+    this.devices = const [],
     this.onDelete,
   });
   final HomeAssistantRoom room;
   final int roomIndex;
   final VoidCallback onTap;
   final bool compact;
+  final List<LocalRoomDevice> devices;
   final VoidCallback? onDelete;
 
   IconData get roomIcon {
@@ -961,11 +1366,143 @@ class _RoomCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (compact) {
+      final realDevices = devices.where((device) => device.id.contains('.'));
+      final temperatureDevices = realDevices
+          .where((device) => device.type == 'temperature_sensor')
+          .toList(growable: false);
+      final humidityDevices = realDevices
+          .where((device) => device.type == 'temperature_humidity_sensor')
+          .toList(growable: false);
+      final temperature =
+          temperatureDevices.isEmpty ? null : temperatureDevices.first;
+      final humidity = humidityDevices.isEmpty ? null : humidityDevices.first;
+      IconData deviceIcon(String type) => switch (type) {
+            'light' ||
+            'rgb_light' ||
+            'rgb_strip' =>
+              Icons.lightbulb_outline_rounded,
+            'switch' => Icons.toggle_on_outlined,
+            'socket' => Icons.power_outlined,
+            'contact_sensor' => Icons.sensor_door_outlined,
+            'motion_sensor' => Icons.directions_run_rounded,
+            'leak_sensor' => Icons.water_damage_outlined,
+            'temperature_sensor' ||
+            'temperature_humidity_sensor' =>
+              Icons.thermostat_rounded,
+            _ => Icons.sensors_rounded,
+          };
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(26),
+        child: Ink(
+          height: 142,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(26),
+            border: Border.all(color: Colors.white.withOpacity(.72)),
+            boxShadow: const [
+              BoxShadow(
+                  color: Color(0x14000000),
+                  blurRadius: 16,
+                  offset: Offset(0, 7)),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(25),
+            child: Stack(fit: StackFit.expand, children: [
+              RoomAtlasImage(
+                index: roomIndex,
+                roomName: localizedRoomName(room),
+                roomIcon: room.icon,
+                roomType: room.roomType,
+              ),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [
+                      Colors.black.withOpacity(.50),
+                      Colors.black.withOpacity(.18),
+                      Colors.black.withOpacity(.32),
+                    ],
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 20,
+                right: 14,
+                top: 17,
+                child: Row(children: [
+                  Expanded(
+                    child: Text(
+                      localizedRoomName(room),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 21,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  ...devices.take(4).map(
+                        (device) => Container(
+                          width: 30,
+                          height: 30,
+                          margin: const EdgeInsets.only(left: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(.88),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(deviceIcon(device.type),
+                              color: _orange, size: 16),
+                        ),
+                      ),
+                ]),
+              ),
+              Positioned(
+                left: 20,
+                right: 18,
+                bottom: 17,
+                child: Row(children: [
+                  if (temperature != null) ...[
+                    const Icon(Icons.thermostat_rounded,
+                        color: _orange, size: 17),
+                    Text(
+                      ' ${temperature.temperature.toStringAsFixed(1)}°',
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(width: 12),
+                  ],
+                  if (humidity != null) ...[
+                    const Icon(Icons.water_drop_outlined,
+                        color: _orange, size: 16),
+                    Text(
+                      ' ${humidity.humidity.round()}%',
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                  const Spacer(),
+                  Text(
+                    '${devices.length} ${I18n.t('устройств', 'устройствоос', 'devices')}',
+                    style: TextStyle(
+                        color: Colors.white.withOpacity(.82), fontSize: 12),
+                  ),
+                ]),
+              ),
+            ]),
+          ),
+        ),
+      );
+    }
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20),
       child: Ink(
-        height: compact ? 128 : 176,
+        height: 176,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: Colors.white24),
@@ -1374,21 +1911,6 @@ class _CreateRoomSheetState extends State<_CreateRoomSheet> {
   }
 }
 
-class _EmptyPage extends StatelessWidget {
-  const _EmptyPage(
-      {required this.title, required this.text, required this.icon});
-  final String title, text;
-  final IconData icon;
-  @override
-  Widget build(BuildContext context) => Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        _EmptyCard(icon: icon, text: text),
-        const SizedBox(height: 20),
-        Text(title, style: _pageTitle(context))
-      ]));
-}
-
 class _GlassDock extends StatelessWidget {
   const _GlassDock({
     required this.index,
@@ -1402,87 +1924,105 @@ class _GlassDock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const items = [
-      (0, Icons.home_outlined, Icons.home_rounded),
-      (1, Icons.meeting_room_outlined, Icons.meeting_room_rounded),
-      (2, Icons.bolt_outlined, Icons.bolt_rounded),
-      (4, Icons.settings_outlined, Icons.settings_rounded),
+      (0, Icons.home_outlined, Icons.home_rounded, 'Главная'),
+      (1, Icons.meeting_room_outlined, Icons.meeting_room_rounded, 'Комнаты'),
+      (2, Icons.bolt_outlined, Icons.bolt_rounded, 'Автоматизации'),
+      (3, Icons.auto_awesome_outlined, Icons.auto_awesome_rounded, 'Сцены'),
+      (4, Icons.settings_outlined, Icons.settings_rounded, 'Настройки'),
     ];
     return SafeArea(
       top: false,
       minimum: const EdgeInsets.fromLTRB(18, 0, 18, 14),
-      child: Row(
-        children: [
-          Expanded(
-            child: Container(
-              height: 68,
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: [_orangeSoft, _orange]),
-                borderRadius: BorderRadius.circular(28),
-                boxShadow: [
-                  BoxShadow(
-                    color: _orange.withOpacity(.35),
-                    blurRadius: 30,
-                    offset: const Offset(0, 14),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: items.map((item) {
-                  final selected = index == item.$1;
-                  return Expanded(
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(22),
-                      onTap: () => onChanged(item.$1),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOutCubic,
-                        decoration: BoxDecoration(
-                          color: selected
-                              ? Colors.white.withOpacity(.18)
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(22),
-                          border: selected
-                              ? Border.all(color: Colors.white30)
-                              : null,
-                        ),
-                        child: Center(
-                          child: Icon(
-                            selected ? item.$3 : item.$2,
-                            color: Colors.white,
-                            size: 25,
+      child: SizedBox(
+        height: 116,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                height: 68,
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                decoration: BoxDecoration(
+                  gradient:
+                      const LinearGradient(colors: [_orangeSoft, _orange]),
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _orange.withOpacity(.35),
+                      blurRadius: 30,
+                      offset: const Offset(0, 14),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: items.map((item) {
+                    final selected = index == item.$1;
+                    return Expanded(
+                      child: Tooltip(
+                        message: item.$4,
+                        child: Semantics(
+                          label: item.$4,
+                          selected: selected,
+                          button: true,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(22),
+                            onTap: () => onChanged(item.$1),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 220),
+                              curve: Curves.easeOutCubic,
+                              decoration: BoxDecoration(
+                                color: selected
+                                    ? Colors.white.withOpacity(.18)
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(22),
+                                border: selected
+                                    ? Border.all(color: Colors.white30)
+                                    : null,
+                              ),
+                              child: Center(
+                                child: Icon(
+                                  selected ? item.$3 : item.$2,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  );
-                }).toList(),
+                    );
+                  }).toList(),
+                ),
               ),
             ),
-          ),
-          const SizedBox(width: 10),
-          Material(
-            color: Colors.white,
-            shape: const CircleBorder(),
-            elevation: 12,
-            shadowColor: Colors.black54,
-            child: InkWell(
-              customBorder: const CircleBorder(),
-              onTap: onAssistant,
-              child: const SizedBox(
-                width: 68,
-                height: 68,
-                child: Padding(
-                  padding: EdgeInsets.all(12),
-                  child: Image(
-                    image: AssetImage('assets/images/icons/ai_assistant.png'),
-                    fit: BoxFit.contain,
+            Positioned(
+              right: 8,
+              top: -14,
+              child: Material(
+                color: Colors.white,
+                shape: const CircleBorder(),
+                elevation: 12,
+                shadowColor: Colors.black45,
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onAssistant,
+                  child: const SizedBox(
+                    width: 62,
+                    height: 62,
+                    child: Icon(
+                      Icons.auto_awesome_rounded,
+                      color: _orange,
+                      size: 32,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1501,19 +2041,6 @@ class _SectionTitle extends StatelessWidget {
               fontWeight: FontWeight.w700)));
 }
 
-class _OrangeIcon extends StatelessWidget {
-  const _OrangeIcon(this.icon);
-  final IconData icon;
-  @override
-  Widget build(BuildContext context) => Container(
-      width: 42,
-      height: 42,
-      decoration: BoxDecoration(
-          color: _orange.withOpacity(.14),
-          borderRadius: BorderRadius.circular(14)),
-      child: Icon(icon, color: _orangeSoft, size: 21));
-}
-
 class _IconButton extends StatelessWidget {
   const _IconButton({required this.icon, required this.onTap});
   final IconData icon;
@@ -1527,21 +2054,75 @@ class _IconButton extends StatelessWidget {
           child: Icon(icon, color: _foreground(context), size: 20)));
 }
 
-class _EmptyCard extends StatelessWidget {
-  const _EmptyCard({required this.icon, required this.text});
-  final IconData icon;
-  final String text;
+class _UserAvatarButton extends StatelessWidget {
+  const _UserAvatarButton({
+    required this.avatarUrl,
+    required this.name,
+    required this.onTap,
+  });
+
+  final String avatarUrl;
+  final String name;
+  final VoidCallback onTap;
+
+  String get initial {
+    final value = name.trim();
+    return value.isEmpty ? 'U' : value.characters.first.toUpperCase();
+  }
+
+  Widget fallback(BuildContext context) => ColoredBox(
+        color: _orange.withOpacity(.15),
+        child: Center(
+          child: Text(
+            initial,
+            style: const TextStyle(
+              color: _orange,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      );
+
   @override
-  Widget build(BuildContext context) => _Glass(
-      child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(children: [
-            _OrangeIcon(icon),
-            const SizedBox(height: 18),
-            Text(text,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _secondary(context), height: 1.5))
-          ])));
+  Widget build(BuildContext context) => Semantics(
+        label: I18n.t('Открыть профиль', 'Профиль усьтыны', 'Open profile'),
+        button: true,
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            onTap: onTap,
+            customBorder: const CircleBorder(),
+            child: Container(
+              width: 42,
+              height: 42,
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Theme.of(context).colorScheme.surface.withOpacity(.82),
+                border: Border.all(color: Colors.white.withOpacity(.55)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x18000000),
+                    blurRadius: 12,
+                    offset: Offset(0, 5),
+                  ),
+                ],
+              ),
+              child: ClipOval(
+                child: avatarUrl.isEmpty
+                    ? fallback(context)
+                    : Image.network(
+                        avatarUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => fallback(context),
+                      ),
+              ),
+            ),
+          ),
+        ),
+      );
 }
 
 class _Glass extends StatelessWidget {

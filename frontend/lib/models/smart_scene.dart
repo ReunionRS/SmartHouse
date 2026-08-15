@@ -12,6 +12,7 @@ class SmartScene {
     required this.actionType,
     this.enabled = true,
     this.lastRunAt,
+    this.settings = const {},
   });
 
   final String id;
@@ -26,6 +27,7 @@ class SmartScene {
   final String actionType;
   final bool enabled;
   final DateTime? lastRunAt;
+  final Map<String, dynamic> settings;
 
   SmartScene copyWith({bool? enabled, DateTime? lastRunAt}) => SmartScene(
         id: id,
@@ -40,6 +42,7 @@ class SmartScene {
         actionType: actionType,
         enabled: enabled ?? this.enabled,
         lastRunAt: lastRunAt ?? this.lastRunAt,
+        settings: settings,
       );
 
   factory SmartScene.fromJson(Map<String, dynamic> json) => SmartScene(
@@ -59,6 +62,10 @@ class SmartScene {
         actionType: (json['action_type'] ?? 'turn_on').toString(),
         enabled: json['enabled'] != false,
         lastRunAt: DateTime.tryParse((json['last_run_at'] ?? '').toString()),
+        settings: json['settings'] is Map<String, dynamic>
+            ? Map<String, dynamic>.from(
+                json['settings'] as Map<String, dynamic>)
+            : const {},
       );
 
   Map<String, dynamic> toJson() => {
@@ -74,5 +81,6 @@ class SmartScene {
         'action_type': actionType,
         'enabled': enabled,
         'last_run_at': lastRunAt?.toIso8601String(),
+        'settings': settings,
       };
 }

@@ -11,6 +11,7 @@ import systemRoutes from './routes/systems.js';
 import aiRoutes from './routes/ai.js';
 import automationRoutes from './routes/automations.js';
 import appStateRoutes from './routes/app-state.js';
+import sceneRoutes from './routes/scenes.js';
 
 const uploadsPath = fileURLToPath(config.uploadsDir);
 
@@ -38,6 +39,7 @@ export const createApp = () => {
   app.use('/api/ai', aiRoutes);
   app.use('/api/automations', automationRoutes);
   app.use('/api/app-state', appStateRoutes);
+  app.use('/api/homes/:homeId/scenes', sceneRoutes);
   app.use((_req, res) => res.status(404).json({ error: 'Маршрут не найден' }));
   app.use((error, _req, res, _next) => {
     console.error(error);

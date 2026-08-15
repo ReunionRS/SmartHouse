@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:speech_to_text/speech_to_text.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/ui_tokens.dart';
+import '../../core/app_language.dart';
 import '../../services/ai_assistant_service.dart';
 
 class AiChatSheet extends StatefulWidget {
@@ -16,7 +18,9 @@ class AiChatSheet extends StatefulWidget {
 
 class _AiChatSheetState extends State<AiChatSheet> {
   final controller = TextEditingController();
+  final scrollController = ScrollController();
   final service = AiAssistantService();
+  final speech = SpeechToText();
   final messages = <({String text, bool assistant})>[];
   String? conversationId;
   bool sending = false;
@@ -26,23 +30,231 @@ class _AiChatSheetState extends State<AiChatSheet> {
   Timer? statusTimer;
   List<String> activeStatuses = const ['Обрабатываю запрос…'];
   int statusIndex = 0;
+  Timer? recordingTimer;
+  Duration recordingDuration = Duration.zero;
+  bool listening = false;
+  bool restartingVoice = false;
+  String voicePrefix = '';
+  int voiceSessionId = 0;
+  double soundLevel = 0;
+  bool loadingHistory = true;
+  int restoredMessageCount = 0;
 
-  static const questions = [
-    'Что происходит дома?',
-    'Почему в спальне холодно?',
-    'У каких устройств низкий заряд?',
-    'Сколько энергии потрачено сегодня?',
-  ];
+  bool get english => AppLanguageStore.current == AppLanguage.en;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHistory();
+  }
+
+  Future<void> _loadHistory() async {
+    try {
+      final history = await service.loadLatestConversation();
+      if (!mounted) return;
+      setState(() {
+        conversationId = history?.id;
+        messages
+          ..clear()
+          ..addAll((history?.messages ?? const [])
+              .map((item) => (text: item.text, assistant: item.assistant)));
+        restoredMessageCount = messages.length;
+        loadingHistory = false;
+      });
+      scrollToBottom(immediate: true);
+    } catch (_) {
+      if (mounted) setState(() => loadingHistory = false);
+    }
+  }
+
+  List<String> get questions => english
+      ? const [
+          'What is happening at home?',
+          'Why is the bedroom cold?',
+          'Which devices have low battery?',
+          'How much energy was used today?',
+        ]
+      : const [
+          'Что происходит дома?',
+          'Почему в спальне холодно?',
+          'У каких устройств низкий заряд?',
+          'Сколько энергии потрачено сегодня?',
+        ];
 
   @override
   void dispose() {
     statusTimer?.cancel();
+    recordingTimer?.cancel();
+    voiceSessionId += 1;
+    speech.stop();
     controller.dispose();
+    scrollController.dispose();
     super.dispose();
+  }
+
+  String get recordingTime {
+    final minutes = recordingDuration.inMinutes.toString().padLeft(2, '0');
+    final seconds =
+        (recordingDuration.inSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  Future<void> toggleVoiceInput() async {
+    if (listening) {
+      await stopVoiceInput();
+      return;
+    }
+    final available = await speech.initialize(
+      onStatus: (status) {
+        if ((status == 'done' || status == 'notListening') && listening) {
+          voicePrefix = controller.text.trim();
+          _listenVoiceCycle();
+        }
+      },
+      onError: (error) {
+        if (!mounted) return;
+        stopVoiceInput();
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(english
+              ? 'Voice input is unavailable: ${error.errorMsg}'
+              : 'Голосовой ввод недоступен: ${error.errorMsg}'),
+        ));
+      },
+    );
+    if (!available || !mounted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(english
+              ? 'Allow microphone and speech recognition access.'
+              : 'Разрешите доступ к микрофону и распознаванию речи.'),
+        ));
+      }
+      return;
+    }
+    setState(() {
+      voiceSessionId += 1;
+      listening = true;
+      recordingDuration = Duration.zero;
+      soundLevel = 0;
+      voicePrefix = controller.text.trim();
+    });
+    recordingTimer?.cancel();
+    recordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && listening) {
+        setState(() => recordingDuration += const Duration(seconds: 1));
+      }
+    });
+    await _listenVoiceCycle();
+  }
+
+  Future<void> _listenVoiceCycle() async {
+    if (!listening || speech.isListening || restartingVoice) return;
+    restartingVoice = true;
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    if (!listening) {
+      restartingVoice = false;
+      return;
+    }
+    final sessionId = voiceSessionId;
+    await speech.listen(
+      localeId: english ? 'en_US' : 'ru_RU',
+      partialResults: true,
+      listenMode: ListenMode.dictation,
+      listenFor: const Duration(minutes: 10),
+      pauseFor: const Duration(seconds: 30),
+      cancelOnError: false,
+      onSoundLevelChange: (level) {
+        if (mounted && listening && sessionId == voiceSessionId) {
+          setState(() => soundLevel = level);
+        }
+      },
+      onResult: (result) {
+        if (!mounted || sessionId != voiceSessionId) return;
+        controller.text = [voicePrefix, result.recognizedWords]
+            .where((part) => part.trim().isNotEmpty)
+            .join(' ');
+        controller.selection =
+            TextSelection.collapsed(offset: controller.text.length);
+        if (result.finalResult) voicePrefix = controller.text.trim();
+        setState(() {});
+      },
+    );
+    restartingVoice = false;
+  }
+
+  Future<void> stopVoiceInput() async {
+    recordingTimer?.cancel();
+    if (mounted && listening) setState(() => listening = false);
+    if (speech.isListening) await speech.stop();
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    voiceSessionId += 1;
+    restartingVoice = false;
+  }
+
+  Future<void> sendVoiceInput() async {
+    await stopVoiceInput();
+    final recognizedText = controller.text.trim();
+    if (recognizedText.isNotEmpty) await send(recognizedText);
+  }
+
+  void scrollToBottom({bool immediate = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !scrollController.hasClients) return;
+      if (immediate) {
+        scrollController.jumpTo(scrollController.position.maxScrollExtent);
+        return;
+      }
+      scrollController.animateTo(
+        scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    });
   }
 
   List<String> statusesFor(String text) {
     final query = text.toLowerCase();
+    if (english) {
+      if (query.contains('buy') ||
+          query.contains('price') ||
+          query.contains('recommend') ||
+          query.contains('marketplace') ||
+          query.contains('shop')) {
+        return const [
+          'Searching for suitable devices online…',
+          'Checking available marketplaces…',
+          'Comparing the search results…',
+          'Checking Home Assistant compatibility…',
+        ];
+      }
+      if (query.contains('weather') || query.contains('forecast')) {
+        return const [
+          'Identifying the location…',
+          'Getting weather-service data…',
+          'Checking the latest forecast…',
+        ];
+      }
+      return const [
+        'Connecting to Smart Hub…',
+        'Checking Home Assistant data…',
+        'Preparing the answer…',
+      ];
+    }
+    if (query.contains('купить') ||
+        query.contains('покупк') ||
+        query.contains('подбери') ||
+        query.contains('посоветуй') ||
+        query.contains('рекомендуй') ||
+        query.contains('маркетплейс') ||
+        query.contains('магазин') ||
+        query.contains('цена')) {
+      return const [
+        'Ищу подходящие устройства в сети…',
+        'Проверяю российские маркетплейсы…',
+        'Сравниваю найденные предложения…',
+        'Проверяю совместимость с Home Assistant…',
+      ];
+    }
     if (query.contains('погод') ||
         query.contains('прогноз') ||
         query.contains('температура на улице')) {
@@ -113,6 +325,7 @@ class _AiChatSheetState extends State<AiChatSheet> {
       sending = true;
       messages.add((text: text, assistant: false));
     });
+    scrollToBottom();
     try {
       final response =
           await service.send(message: text, conversationId: conversationId);
@@ -123,15 +336,18 @@ class _AiChatSheetState extends State<AiChatSheet> {
         responseData = response.data;
         messages.add((text: response.message, assistant: true));
       });
+      scrollToBottom();
     } catch (error) {
       if (!mounted) return;
       setState(() => messages.add((
             text: error.toString().replaceFirst('Exception: ', ''),
             assistant: true
           )));
+      scrollToBottom();
     } finally {
       statusTimer?.cancel();
       if (mounted) setState(() => sending = false);
+      scrollToBottom();
     }
   }
 
@@ -147,12 +363,14 @@ class _AiChatSheetState extends State<AiChatSheet> {
         responseData = null;
         messages.add((text: text, assistant: true));
       });
+      scrollToBottom();
     } catch (error) {
       if (mounted) {
         setState(() => messages.add((
               text: error.toString().replaceFirst('Exception: ', ''),
               assistant: true,
             )));
+        scrollToBottom();
       }
     } finally {
       if (mounted) setState(() => actionProcessing = false);
@@ -171,12 +389,14 @@ class _AiChatSheetState extends State<AiChatSheet> {
         responseData = null;
         messages.add((text: 'Действие отменено.', assistant: true));
       });
+      scrollToBottom();
     } catch (error) {
       if (mounted) {
         setState(() => messages.add((
               text: error.toString().replaceFirst('Exception: ', ''),
               assistant: true,
             )));
+        scrollToBottom();
       }
     } finally {
       if (mounted) setState(() => actionProcessing = false);
@@ -195,12 +415,14 @@ class _AiChatSheetState extends State<AiChatSheet> {
         responseData = null;
         messages.add((text: text, assistant: true));
       });
+      scrollToBottom();
     } catch (error) {
       if (mounted) {
         setState(() => messages.add((
               text: error.toString().replaceFirst('Exception: ', ''),
               assistant: true,
             )));
+        scrollToBottom();
       }
     } finally {
       if (mounted) setState(() => actionProcessing = false);
@@ -249,7 +471,7 @@ class _AiChatSheetState extends State<AiChatSheet> {
                       fontSize: 18,
                       fontWeight: FontWeight.w700)),
               const SizedBox(height: 3),
-              Text('Спросите о вашем доме…',
+              Text(english ? 'Ask about your home…' : 'Спросите о вашем доме…',
                   style: TextStyle(color: secondaryText, fontSize: 12)),
             ]),
           ),
@@ -257,6 +479,7 @@ class _AiChatSheetState extends State<AiChatSheet> {
         const SizedBox(height: 14),
         Flexible(
           child: SingleChildScrollView(
+            controller: scrollController,
             child:
                 Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Container(
@@ -276,7 +499,9 @@ class _AiChatSheetState extends State<AiChatSheet> {
                   ],
                 ),
                 child: Text(
-                  'Я получаю актуальные данные напрямую с вашего локального Home Assistant. Спросите, что сейчас происходит дома.',
+                  english
+                      ? 'I receive live data directly from your local Home Assistant. Ask what is happening at home.'
+                      : 'Я получаю актуальные данные напрямую с вашего локального Home Assistant. Спросите, что сейчас происходит дома.',
                   style: TextStyle(
                     color: primaryText,
                     fontSize: 13,
@@ -284,9 +509,14 @@ class _AiChatSheetState extends State<AiChatSheet> {
                   ),
                 ),
               ),
-              if (messages.isEmpty) ...[
+              if (loadingHistory)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 28),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (messages.isEmpty) ...[
                 const SizedBox(height: 17),
-                Text('Попробуйте спросить',
+                Text(english ? 'Try asking' : 'Попробуйте спросить',
                     style: TextStyle(color: secondaryText, fontSize: 12)),
                 const SizedBox(height: 9),
                 Wrap(
@@ -306,7 +536,25 @@ class _AiChatSheetState extends State<AiChatSheet> {
                 ),
               ] else ...[
                 const SizedBox(height: 14),
-                ...messages.map((item) => Align(
+                ...messages.asMap().entries.map((entry) {
+                  final item = entry.value;
+                  final animate = entry.key >= restoredMessageCount;
+                  return TweenAnimationBuilder<double>(
+                    key: ValueKey(
+                        '${entry.key}_${item.assistant}_${item.text.hashCode}'),
+                    tween: Tween(begin: animate ? 0 : 1, end: 1),
+                    duration: animate
+                        ? const Duration(milliseconds: 320)
+                        : Duration.zero,
+                    curve: Curves.easeOutCubic,
+                    builder: (context, value, child) => Opacity(
+                      opacity: value,
+                      child: Transform.translate(
+                        offset: Offset(0, 10 * (1 - value)),
+                        child: child,
+                      ),
+                    ),
+                    child: Align(
                       alignment: item.assistant
                           ? Alignment.centerLeft
                           : Alignment.centerRight,
@@ -318,20 +566,29 @@ class _AiChatSheetState extends State<AiChatSheet> {
                           color: item.assistant ? cardColor : UiTokens.accent,
                           borderRadius: BorderRadius.circular(18),
                         ),
-                        child: item.assistant
-                            ? _AssistantMarkdown(
+                        child: item.assistant && animate
+                            ? _AnimatedAssistantMarkdown(
                                 data: item.text,
                                 color: primaryText,
+                                onProgress: () =>
+                                    scrollToBottom(immediate: true),
                               )
-                            : Text(
-                                item.text,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                ),
-                              ),
+                            : item.assistant
+                                ? _AssistantMarkdown(
+                                    data: item.text,
+                                    color: primaryText,
+                                  )
+                                : Text(
+                                    item.text,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                    ),
+                                  ),
                       ),
-                    )),
+                    ),
+                  );
+                }),
                 if (responseData != null && responseType != 'text')
                   _AiDataCard(
                     type: responseType,
@@ -373,43 +630,189 @@ class _AiChatSheetState extends State<AiChatSheet> {
             borderRadius: BorderRadius.circular(19),
           ),
           child: Row(children: [
-            Expanded(
-              child: TextField(
-                controller: controller,
-                minLines: 1,
-                maxLines: 3,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => send(),
-                style: TextStyle(color: primaryText, fontSize: 13),
-                decoration: InputDecoration(
-                  hintText: 'Спросите о вашем доме…',
-                  hintStyle: TextStyle(color: secondaryText),
-                  filled: false,
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  disabledBorder: InputBorder.none,
-                  errorBorder: InputBorder.none,
-                  focusedErrorBorder: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 11),
-                  isDense: true,
+            if (listening) ...[
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: UiTokens.accent.withOpacity(.14),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                          color: Colors.redAccent, shape: BoxShape.circle)),
+                  const SizedBox(width: 6),
+                  Text(recordingTime,
+                      style: TextStyle(
+                          color: primaryText, fontWeight: FontWeight.w700)),
+                ]),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: _VoiceLevel(
+                level: soundLevel,
+                color: UiTokens.accent,
+                label: english ? 'Listening…' : 'Говорите…',
+              )),
+            ] else
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  minLines: 1,
+                  maxLines: 3,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => send(),
+                  onTap: scrollToBottom,
+                  style: TextStyle(color: primaryText, fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: english
+                        ? 'Ask about your home…'
+                        : 'Спросите о вашем доме…',
+                    hintStyle: TextStyle(color: secondaryText),
+                    filled: false,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    disabledBorder: InputBorder.none,
+                    errorBorder: InputBorder.none,
+                    focusedErrorBorder: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 11),
+                    isDense: true,
+                  ),
                 ),
               ),
-            ),
             const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: sending ? null : send,
-              style: IconButton.styleFrom(
-                backgroundColor: UiTokens.accent,
-                foregroundColor: Colors.white,
+            TweenAnimationBuilder<double>(
+              tween: Tween(
+                begin: 1,
+                end: listening
+                    ? 1.05 + (((soundLevel + 2) / 12).clamp(0, 1) * .18)
+                    : 1,
               ),
-              icon: const Icon(Icons.arrow_upward_rounded, size: 19),
+              duration: const Duration(milliseconds: 180),
+              builder: (context, scale, child) =>
+                  Transform.scale(scale: scale, child: child),
+              child: IconButton(
+                onPressed: sending
+                    ? null
+                    : listening
+                        ? sendVoiceInput
+                        : toggleVoiceInput,
+                style: IconButton.styleFrom(
+                  backgroundColor: listening
+                      ? Colors.redAccent
+                      : UiTokens.accent.withOpacity(.12),
+                  foregroundColor: listening ? Colors.white : UiTokens.accent,
+                ),
+                icon: Icon(listening ? Icons.stop_rounded : Icons.mic_rounded,
+                    size: 20),
+              ),
             ),
+            if (!listening) const SizedBox(width: 4),
+            if (!listening)
+              IconButton.filled(
+                onPressed: sending ? null : () => send(),
+                style: IconButton.styleFrom(
+                  backgroundColor: UiTokens.accent,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.arrow_upward_rounded, size: 19),
+              ),
           ]),
         ),
       ]),
     );
   }
+}
+
+class _VoiceLevel extends StatelessWidget {
+  const _VoiceLevel(
+      {required this.level, required this.color, required this.label});
+  final double level;
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final strength = ((level + 2) / 12).clamp(0.08, 1.0);
+    return Row(children: [
+      for (var index = 0; index < 5; index++) ...[
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          width: 3,
+          height: 7 + 17 * ((strength + index * .13) % 1),
+          decoration: BoxDecoration(
+              color: color, borderRadius: BorderRadius.circular(4)),
+        ),
+        const SizedBox(width: 3),
+      ],
+      const SizedBox(width: 5),
+      Expanded(
+          child: Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12))),
+    ]);
+  }
+}
+
+class _AnimatedAssistantMarkdown extends StatefulWidget {
+  const _AnimatedAssistantMarkdown({
+    required this.data,
+    required this.color,
+    required this.onProgress,
+  });
+
+  final String data;
+  final Color color;
+  final VoidCallback onProgress;
+
+  @override
+  State<_AnimatedAssistantMarkdown> createState() =>
+      _AnimatedAssistantMarkdownState();
+}
+
+class _AnimatedAssistantMarkdownState
+    extends State<_AnimatedAssistantMarkdown> {
+  Timer? timer;
+  int visibleCharacters = 0;
+  int ticks = 0;
+
+  int get charactersPerTick => (widget.data.length / 110).ceil().clamp(1, 14);
+
+  @override
+  void initState() {
+    super.initState();
+    timer = Timer.periodic(const Duration(milliseconds: 18), (_) {
+      if (!mounted) return;
+      final next = (visibleCharacters + charactersPerTick)
+          .clamp(0, widget.data.length)
+          .toInt();
+      setState(() => visibleCharacters = next);
+      ticks++;
+      if (ticks % 4 == 0 || next == widget.data.length) {
+        widget.onProgress();
+      }
+      if (next == widget.data.length) timer?.cancel();
+    });
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => _AssistantMarkdown(
+        data: widget.data.substring(0, visibleCharacters),
+        color: widget.color,
+      );
 }
 
 class _AssistantMarkdown extends StatelessWidget {

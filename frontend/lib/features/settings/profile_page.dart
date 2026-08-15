@@ -25,7 +25,9 @@ class ProfilePage extends StatefulWidget {
     required this.onLanguageChanged,
     required this.onLogout,
     required this.onReconnectHub,
+    required this.onOpenDashboardSettings,
     this.onNameChanged,
+    this.onAvatarChanged,
   });
 
   final AppSession session;
@@ -38,7 +40,9 @@ class ProfilePage extends StatefulWidget {
   final Future<void> Function(AppLanguage language) onLanguageChanged;
   final Future<void> Function() onLogout;
   final Future<void> Function() onReconnectHub;
+  final VoidCallback onOpenDashboardSettings;
   final ValueChanged<String>? onNameChanged;
+  final ValueChanged<String>? onAvatarChanged;
 
   @override
   State<ProfilePage> createState() => _ProfilePageState();
@@ -60,7 +64,10 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
           auth: widget.auth,
           onNameChanged: widget.onNameChanged,
-          onAvatarChanged: (value) => setState(() => avatarUrl = value),
+          onAvatarChanged: (value) {
+            setState(() => avatarUrl = value);
+            widget.onAvatarChanged?.call(value);
+          },
         ),
       ),
     );
@@ -158,6 +165,17 @@ class _ProfilePageState extends State<ProfilePage> {
             icon: Icons.notifications_outlined,
             title: I18n.t('Уведомления', 'Иворъёс', 'Notifications'),
             onTap: _openNotifications,
+          ),
+          const SizedBox(height: 10),
+          _ProfileTile(
+            icon: Icons.dashboard_customize_outlined,
+            title: I18n.t(
+              'Главный экран',
+              'Главной экран',
+              'Home dashboard',
+            ),
+            trailing: I18n.t('Настроить', 'Келян', 'Configure'),
+            onTap: widget.onOpenDashboardSettings,
           ),
           const SizedBox(height: 10),
           _ProfileTile(
@@ -278,7 +296,7 @@ class _MyProfilePageState extends State<MyProfilePage> {
     if (picking) return;
     setState(() => picking = true);
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         type: FileType.image,
         allowMultiple: false,
         withData: true,

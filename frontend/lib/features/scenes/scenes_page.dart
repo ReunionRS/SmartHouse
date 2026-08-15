@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 import '../../core/i18n.dart';
 import '../../models/home_assistant_room.dart';
@@ -9,6 +9,18 @@ import '../../ui/device_asset_catalog.dart';
 
 const _accent = Color(0xFFFF7A18);
 
+enum ScenesView { automations, scenes }
+
+IconData _presetIcon(String id) => switch (id) {
+      'preset_home' => Icons.home_rounded,
+      'preset_away' => Icons.directions_walk_rounded,
+      'preset_morning' => Icons.wb_sunny_rounded,
+      'preset_night' => Icons.bedtime_rounded,
+      'preset_movie' => Icons.movie_rounded,
+      'preset_vacation' => Icons.flight_takeoff_rounded,
+      _ => Icons.auto_awesome_rounded,
+    };
+
 class ScenesPage extends StatefulWidget {
   const ScenesPage({
     super.key,
@@ -16,11 +28,13 @@ class ScenesPage extends StatefulWidget {
     required this.devices,
     required this.rooms,
     required this.onDevicesChanged,
+    this.view = ScenesView.automations,
   });
   final String userId;
   final List<LocalRoomDevice> devices;
   final List<HomeAssistantRoom> rooms;
   final Future<void> Function() onDevicesChanged;
+  final ScenesView view;
 
   @override
   State<ScenesPage> createState() => _ScenesPageState();
@@ -29,6 +43,13 @@ class ScenesPage extends StatefulWidget {
 class _ScenesPageState extends State<ScenesPage> {
   final service = SceneService();
   List<SmartScene> scenes = const [];
+  bool loading = true;
+
+  List<SmartScene> get visibleScenes => scenes
+      .where((scene) => widget.view == ScenesView.scenes
+          ? ['manual', 'preset'].contains(scene.triggerType)
+          : !['manual', 'preset'].contains(scene.triggerType))
+      .toList(growable: false);
 
   @override
   void initState() {
@@ -40,29 +61,50 @@ class _ScenesPageState extends State<ScenesPage> {
     final values = await Future.wait([
       service.load(widget.userId),
       service.loadHomeAssistant(),
+      service.loadPresets(),
     ]);
-    if (mounted) setState(() => scenes = [...values[1], ...values[0]]);
+    if (mounted) {
+      setState(() {
+        scenes = [...values[2], ...values[1], ...values[0]];
+        loading = false;
+      });
+    }
   }
 
   Future<void> persist(List<SmartScene> value) async {
     setState(() => scenes = value);
-    await service.save(widget.userId,
-        value.where((item) => item.triggerType != 'home_assistant').toList());
+    await service.save(
+        widget.userId,
+        value
+            .where((item) =>
+                item.triggerType != 'home_assistant' &&
+                item.triggerType != 'preset' &&
+                item.settings['source'] != 'smart_house')
+            .toList());
   }
 
   Future<void> edit([SmartScene? scene]) async {
     if (widget.devices.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text(
-              'Сначала добавьте устройство в комнату')));
+          content: Text('Сначала добавьте устройство в комнату')));
       return;
     }
     final result = await Navigator.of(context).push<SmartScene>(
       MaterialPageRoute(
-        builder: (_) => _SceneEditor(scene: scene, devices: widget.devices),
+        builder: (_) => _SceneEditor(
+          scene: scene,
+          devices: widget.devices,
+          manualOnly: widget.view == ScenesView.scenes,
+        ),
       ),
     );
     if (result == null) return;
+    if (scene?.settings['source'] == 'smart_house') {
+      await service.updateLocalAutomation(result);
+      await load();
+      await widget.onDevicesChanged();
+      return;
+    }
     final value = [...scenes];
     final index = value.indexWhere((item) => item.id == result.id);
     if (index < 0) {
@@ -73,18 +115,230 @@ class _ScenesPageState extends State<ScenesPage> {
     await persist(value);
   }
 
+  Future<void> toggleScene(SmartScene scene) async {
+    final updated = scene.copyWith(enabled: !scene.enabled);
+    if (scene.settings['source'] == 'smart_house') {
+      await service.updateLocalAutomation(updated);
+      await load();
+      await widget.onDevicesChanged();
+      return;
+    }
+    await persist([
+      for (final item in scenes)
+        if (item.id == scene.id) updated else item,
+    ]);
+  }
+
+  Future<void> deleteScene(SmartScene scene) async {
+    if (scene.settings['source'] == 'smart_house') {
+      await service.deleteLocalAutomation(scene.id);
+      await load();
+      await widget.onDevicesChanged();
+      return;
+    }
+    await persist(scenes.where((item) => item.id != scene.id).toList());
+  }
+
+  Future<void> configurePreset(SmartScene scene) async {
+    if (scene.id == 'preset_away') {
+      await _configureAway(scene);
+      return;
+    }
+    final config = switch (scene.id) {
+      'preset_home' => (
+          'brightness',
+          'Яркость основного света',
+          'Свет включится с выбранной яркостью.',
+          1.0,
+          255.0,
+          180.0
+        ),
+      'preset_morning' => (
+          'brightness',
+          'Утренняя яркость',
+          'Основной свет включится мягко, без резкого перепада.',
+          1.0,
+          255.0,
+          180.0
+        ),
+      'preset_night' => (
+          'nightBrightness',
+          'Яркость ночников',
+          'Остальной свет будет выключен, ночники останутся включёнными.',
+          1.0,
+          255.0,
+          35.0
+        ),
+      'preset_movie' => (
+          'brightness',
+          'Яркость подсветки',
+          'Основной свет выключится, фоновая подсветка останется включённой.',
+          1.0,
+          255.0,
+          45.0
+        ),
+      'preset_vacation' => (
+          'temperature',
+          'Температура отопления',
+          'Минимальная температура для защиты дома во время отъезда.',
+          8.0,
+          22.0,
+          16.0
+        ),
+      _ => null,
+    };
+    if (config == null) return;
+    var selected = (scene.triggerValue > 0 ? scene.triggerValue : config.$6)
+        .clamp(config.$4, config.$5);
+    final value = await showDialog<num>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+                title: Text(scene.name),
+                content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(config.$2,
+                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 6),
+                      Text(config.$3,
+                          style: TextStyle(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                              fontSize: 13)),
+                      const SizedBox(height: 20),
+                      Center(
+                          child: Text(
+                              config.$1 == 'temperature'
+                                  ? '${selected.round()} °C'
+                                  : config.$5 > 100
+                                      ? '${selected.round()} из 255'
+                                      : '${selected.round()}%',
+                              style: const TextStyle(
+                                  fontSize: 28, fontWeight: FontWeight.w700))),
+                      Slider(
+                          value: selected,
+                          min: config.$4,
+                          max: config.$5,
+                          divisions: (config.$5 - config.$4).round(),
+                          onChanged: (value) =>
+                              setDialogState(() => selected = value)),
+                    ]),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Отмена')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(context, selected),
+                      child: const Text('Сохранить')),
+                ],
+              )),
+    );
+    if (value == null) return;
+    await service.savePresetSettings(scene.id, {config.$1: value});
+    await load();
+  }
+
+  Future<void> _configureAway(SmartScene scene) async {
+    var lights = scene.settings['turnOffLights'] != false;
+    var sockets = scene.settings['turnOffSockets'] != false;
+    var lock = scene.settings['lockDoor'] != false;
+    final result = await showDialog<Map<String, bool>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Я ушёл'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Выберите, что должен сделать дом при запуске сцены.',
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Выключить весь свет'),
+                value: lights,
+                onChanged: (value) => setDialogState(() => lights = value),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Выключить безопасные розетки'),
+                subtitle: const Text('Защищённые устройства не отключаются.'),
+                value: sockets,
+                onChanged: (value) => setDialogState(() => sockets = value),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Закрыть входной замок'),
+                subtitle: const Text('Приложение попросит подтверждение.'),
+                value: lock,
+                onChanged: (value) => setDialogState(() => lock = value),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Отмена')),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, {
+                'turnOffLights': lights,
+                'turnOffSockets': sockets,
+                'lockDoor': lock,
+              }),
+              child: const Text('Сохранить'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+    await service.savePresetSettings(scene.id, result);
+    await load();
+  }
+
   Future<void> run(SmartScene scene) async {
     try {
-      await service.run(widget.userId, scene);
+      var report = await service.run(widget.userId, scene);
+      if (report?.status == 'confirmation_required' && mounted) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Подтвердите действие'),
+            content: const Text(
+                'Сцена содержит чувствительное действие, например управление входным замком.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Отмена')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Подтвердить')),
+            ],
+          ),
+        );
+        if (confirmed == true)
+          report = await service.run(widget.userId, scene, confirmed: true);
+        if (confirmed != true) return;
+      }
       final index = scenes.indexWhere((item) => item.id == scene.id);
       final value = [...scenes];
       value[index] = scene.copyWith(lastRunAt: DateTime.now());
       await persist(value);
       await widget.onDevicesChanged();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content:
-                Text('Сценарий «${scene.name}» выполнен')));
+        final failed =
+            report?.results.where((item) => item.status != 'success').length ??
+                0;
+        final message = report == null || report.status == 'success'
+            ? 'Сцена «${scene.name}» выполнена'
+            : 'Сцена выполнена частично: проблем — $failed';
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
       }
     } catch (error) {
       if (mounted) {
@@ -96,12 +350,11 @@ class _ScenesPageState extends State<ScenesPage> {
 
   String deviceName(String id) {
     final index = widget.devices.indexWhere((item) => item.id == id);
-    return index < 0
-        ? 'Устройство удалено'
-        : widget.devices[index].name;
+    return index < 0 ? 'Устройство удалено' : widget.devices[index].name;
   }
 
   String subtitle(SmartScene scene) {
+    if (scene.triggerType == 'preset') return scene.triggerCondition;
     if (scene.triggerType == 'home_assistant') {
       final lastRun = scene.lastRunAt;
       return lastRun == null
@@ -125,8 +378,8 @@ class _ScenesPageState extends State<ScenesPage> {
   Widget build(BuildContext context) => ListView(
         padding: const EdgeInsets.fromLTRB(20, 72, 20, 120),
         children: [
-          const Text('АВТОМАТИЗАЦИИ',
-              style: TextStyle(
+          Text(widget.view == ScenesView.scenes ? 'СЦЕНЫ' : 'АВТОМАТИЗАЦИИ',
+              style: const TextStyle(
                   color: Color(0xFFFF8A2A),
                   fontSize: 10,
                   letterSpacing: 2,
@@ -135,8 +388,10 @@ class _ScenesPageState extends State<ScenesPage> {
           Row(children: [
             Expanded(
               child: Text(
-                  I18n.t('Умные сценарии', 'Сценарийёс',
-                      'Smart scenes'),
+                  widget.view == ScenesView.scenes
+                      ? I18n.t('Сцены', 'Сценарийёс', 'Scenes')
+                      : I18n.t(
+                          'Автоматизации', 'Автоматизациос', 'Automations'),
                   style: const TextStyle(
                       fontSize: 29, fontWeight: FontWeight.w700)),
             ),
@@ -145,25 +400,36 @@ class _ScenesPageState extends State<ScenesPage> {
           ]),
           const SizedBox(height: 8),
           Text(
-            I18n.t(
-                'Автоматизируйте устройства и запускайте действия одним касанием.',
-                'Устройстваосты автоматизируй.',
-                'Automate devices and run actions with one tap.'),
+            widget.view == ScenesView.scenes
+                ? I18n.t(
+                    'Запускайте готовые действия одним касанием.',
+                    'Дась действиеосты одӥг басылӥськонэн кутты.',
+                    'Run prepared actions with one tap.')
+                : I18n.t(
+                    'Автоматизируйте устройства по времени или показаниям датчиков.',
+                    'Устройстваосты автоматизируй.',
+                    'Automate devices by time or sensor state.'),
             style: TextStyle(
                 color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 24),
-          if (scenes.isEmpty)
-            _EmptyScenes(onAdd: edit)
+          if (loading)
+            _ScenesLoading(scenesOnly: widget.view == ScenesView.scenes)
+          else if (visibleScenes.isEmpty)
+            _EmptyScenes(
+              onAdd: edit,
+              scenesOnly: widget.view == ScenesView.scenes,
+            )
           else
-            ...scenes.map((scene) => Padding(
+            ...visibleScenes.map((scene) => Padding(
                   padding: const EdgeInsets.only(bottom: 11),
                   child: Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.surface,
                       borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: Colors.white12),
+                      border: Border.all(
+                          color: Theme.of(context).colorScheme.outlineVariant),
                     ),
                     child: Row(children: [
                       Container(
@@ -172,7 +438,7 @@ class _ScenesPageState extends State<ScenesPage> {
                         decoration: BoxDecoration(
                             color: _accent.withOpacity(.14),
                             borderRadius: BorderRadius.circular(17)),
-                        child: const Icon(Icons.auto_awesome_rounded,
+                        child: Icon(_presetIcon(scene.id),
                             color: Color(0xFFFF8A2A)),
                       ),
                       const SizedBox(width: 12),
@@ -203,38 +469,32 @@ class _ScenesPageState extends State<ScenesPage> {
                       ),
                       PopupMenuButton<String>(
                         onSelected: (value) {
+                          if (value == 'settings') configurePreset(scene);
                           if (value == 'edit') edit(scene);
                           if (value == 'toggle') {
-                            persist([
-                              for (final item in scenes)
-                                if (item.id == scene.id)
-                                  item.copyWith(enabled: !item.enabled)
-                                else
-                                  item,
-                            ]);
+                            toggleScene(scene);
                           }
                           if (value == 'delete') {
-                            persist(scenes
-                                .where((item) => item.id != scene.id)
-                                .toList());
+                            deleteScene(scene);
                           }
                         },
                         itemBuilder: (_) => [
-                          if (scene.triggerType != 'home_assistant') ...[
+                          if (scene.triggerType == 'preset')
+                            const PopupMenuItem(
+                                value: 'settings', child: Text('Настроить'))
+                          else if (scene.triggerType != 'home_assistant') ...[
                             const PopupMenuItem(
                                 value: 'edit', child: Text('Изменить')),
                             PopupMenuItem(
                                 value: 'toggle',
-                                child: Text(scene.enabled
-                                    ? 'Отключить'
-                                    : 'Включить')),
+                                child: Text(
+                                    scene.enabled ? 'Отключить' : 'Включить')),
                             const PopupMenuItem(
                                 value: 'delete', child: Text('Удалить')),
                           ] else
                             const PopupMenuItem(
                                 enabled: false,
-                                child: Text(
-                                    'Управляется Home Assistant')),
+                                child: Text('Управляется Home Assistant')),
                         ],
                       ),
                     ]),
@@ -243,9 +503,55 @@ class _ScenesPageState extends State<ScenesPage> {
         ],
       );
 }
+
+class _ScenesLoading extends StatelessWidget {
+  const _ScenesLoading({required this.scenesOnly});
+
+  final bool scenesOnly;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 30),
+      decoration: BoxDecoration(
+        color: colors.surface.withOpacity(.72),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: colors.outlineVariant.withOpacity(.7)),
+      ),
+      child: Column(
+        children: [
+          const SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: _accent,
+              strokeCap: StrokeCap.round,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            scenesOnly ? 'Загружаем сцены' : 'Загружаем автоматизации',
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            'Синхронизация со Smart House Hub',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: colors.onSurfaceVariant, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _EmptyScenes extends StatelessWidget {
-  const _EmptyScenes({required this.onAdd});
+  const _EmptyScenes({required this.onAdd, required this.scenesOnly});
   final VoidCallback onAdd;
+  final bool scenesOnly;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -253,16 +559,19 @@ class _EmptyScenes extends StatelessWidget {
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: Colors.white12),
+          border:
+              Border.all(color: Theme.of(context).colorScheme.outlineVariant),
         ),
         child: Column(children: [
           const Icon(Icons.auto_awesome_outlined, color: _accent, size: 38),
           const SizedBox(height: 12),
-          const Text('Сценариев пока нет',
-              style: TextStyle(fontWeight: FontWeight.w700)),
+          Text(scenesOnly ? 'Сцен пока нет' : 'Автоматизаций пока нет',
+              style: const TextStyle(fontWeight: FontWeight.w700)),
           const SizedBox(height: 6),
           Text(
-              'Создайте первое автоматическое действие для вашего дома.',
+              scenesOnly
+                  ? 'Создайте набор действий для запуска одним касанием.'
+                  : 'Создайте первое автоматическое действие для вашего дома.',
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -271,15 +580,21 @@ class _EmptyScenes extends StatelessWidget {
           FilledButton.icon(
               onPressed: onAdd,
               icon: const Icon(Icons.add_rounded),
-              label: const Text('Создать сценарий')),
+              label:
+                  Text(scenesOnly ? 'Создать сцену' : 'Создать автоматизацию')),
         ]),
       );
 }
 
 class _SceneEditor extends StatefulWidget {
-  const _SceneEditor({required this.devices, this.scene});
+  const _SceneEditor({
+    required this.devices,
+    required this.manualOnly,
+    this.scene,
+  });
   final List<LocalRoomDevice> devices;
   final SmartScene? scene;
+  final bool manualOnly;
 
   @override
   State<_SceneEditor> createState() => _SceneEditorState();
@@ -287,7 +602,8 @@ class _SceneEditor extends StatefulWidget {
 
 class _SceneEditorState extends State<_SceneEditor> {
   late final name = TextEditingController(text: widget.scene?.name ?? '');
-  late String triggerType = widget.scene?.triggerType ?? 'manual';
+  late String triggerType =
+      widget.scene?.triggerType ?? (widget.manualOnly ? 'manual' : 'time');
   late String triggerTime = widget.scene?.triggerTime ?? '08:00';
   late String triggerDeviceId;
   late String actionDeviceId;
@@ -427,9 +743,8 @@ class _SceneEditorState extends State<_SceneEditor> {
             onPressed: () => Navigator.pop(context),
             icon: const Icon(Icons.arrow_back_ios_new_rounded),
           ),
-          title: Text(widget.scene == null
-              ? 'Новый сценарий'
-              : 'Изменить сценарий'),
+          title: Text(
+              widget.scene == null ? 'Новый сценарий' : 'Изменить сценарий'),
         ),
         body: SafeArea(
           child: ListView(
@@ -439,27 +754,28 @@ class _SceneEditorState extends State<_SceneEditor> {
                 TextField(
                     controller: name,
                     onChanged: (_) => setState(() {}),
-                    decoration:
-                        const InputDecoration(labelText: 'Название')),
+                    decoration: const InputDecoration(labelText: 'Название')),
                 const SizedBox(height: 16),
-                const _StepTitle(
-                    number: 1, title: 'Событие запуска'),
+                const _StepTitle(number: 1, title: 'Событие запуска'),
                 const SizedBox(height: 6),
-                const Text(
-                    'Выберите, когда должен запускаться сценарий',
-                    style: TextStyle(color: Colors.white54, fontSize: 12)),
+                Text('Выберите, когда должен запускаться сценарий',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 12)),
                 const SizedBox(height: 9),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(
-                        value: 'manual', label: Text('Вручную')),
-                    ButtonSegment(value: 'time', label: Text('Время')),
-                    ButtonSegment(value: 'device', label: Text('Датчик')),
-                  ],
-                  selected: {triggerType},
-                  onSelectionChanged: (value) =>
-                      setState(() => triggerType = value.first),
-                ),
+                if (!widget.manualOnly)
+                  SegmentedButton<String>(
+                    segments: const [
+                      ButtonSegment(value: 'time', label: Text('Время')),
+                      ButtonSegment(value: 'device', label: Text('Датчик')),
+                    ],
+                    selected: {triggerType},
+                    onSelectionChanged: (value) =>
+                        setState(() => triggerType = value.first),
+                  )
+                else
+                  const _EditorNotice(
+                      'Сцена запускается вручную одним касанием.'),
                 if (triggerType == 'time') ...[
                   const SizedBox(height: 10),
                   ListTile(
@@ -522,12 +838,10 @@ class _SceneEditorState extends State<_SceneEditor> {
                 ],
                 if (triggerType == 'device') ...[
                   const SizedBox(height: 16),
-                  const _FieldLabel(
-                      'Какой датчик отслеживать'),
+                  const _FieldLabel('Какой датчик отслеживать'),
                   const SizedBox(height: 8),
                   if (sensorDevices.isEmpty)
-                    const _EditorNotice(
-                        'В комнатах пока нет датчиков')
+                    const _EditorNotice('В комнатах пока нет датчиков')
                   else ...[
                     _DeviceChoices(
                       devices: sensorDevices,
@@ -538,8 +852,7 @@ class _SceneEditorState extends State<_SceneEditor> {
                       }),
                     ),
                     const SizedBox(height: 16),
-                    const _FieldLabel(
-                        'При каком состоянии запустить'),
+                    const _FieldLabel('При каком состоянии запустить'),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -575,13 +888,13 @@ class _SceneEditorState extends State<_SceneEditor> {
                 const SizedBox(height: 28),
                 const _StepTitle(number: 2, title: 'Действие'),
                 const SizedBox(height: 6),
-                const Text(
-                    'Выберите устройство, которым нужно управлять',
-                    style: TextStyle(color: Colors.white54, fontSize: 12)),
+                Text('Выберите устройство, которым нужно управлять',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 12)),
                 const SizedBox(height: 12),
                 if (actionDevices.isEmpty)
-                  const _EditorNotice(
-                      'Нет устройств, которыми можно управлять')
+                  const _EditorNotice('Нет устройств, которыми можно управлять')
                 else
                   _DeviceChoices(
                     devices: actionDevices,
@@ -590,16 +903,14 @@ class _SceneEditorState extends State<_SceneEditor> {
                         setState(() => actionDeviceId = value),
                   ),
                 const SizedBox(height: 16),
-                const _FieldLabel(
-                    'Что сделать с устройством'),
+                const _FieldLabel('Что сделать с устройством'),
                 const SizedBox(height: 8),
                 _ActionSelector(
                   value: actionType,
                   onChanged: (value) => setState(() => actionType = value),
                 ),
                 const SizedBox(height: 22),
-                const _StepTitle(
-                    number: 3, title: 'Готовое правило'),
+                const _StepTitle(number: 3, title: 'Готовое правило'),
                 const SizedBox(height: 9),
                 _EditorNotice(summary),
                 const SizedBox(height: 20),
@@ -624,6 +935,7 @@ class _SceneEditorState extends State<_SceneEditor> {
                               actionType: actionType,
                               enabled: widget.scene?.enabled ?? true,
                               lastRunAt: widget.scene?.lastRunAt,
+                              settings: widget.scene?.settings ?? const {},
                             ),
                           ),
                   style: FilledButton.styleFrom(
@@ -694,7 +1006,9 @@ class _ActionSelector extends StatelessWidget {
                         : Theme.of(context).colorScheme.surface,
                     borderRadius: BorderRadius.circular(15),
                     border: Border.all(
-                        color: value == action.$1 ? _accent : Colors.white12,
+                        color: value == action.$1
+                            ? _accent
+                            : Theme.of(context).colorScheme.outlineVariant,
                         width: value == action.$1 ? 2 : 1),
                   ),
                   child: Column(
@@ -702,8 +1016,11 @@ class _ActionSelector extends StatelessWidget {
                       children: [
                         Icon(action.$3,
                             size: 22,
-                            color:
-                                value == action.$1 ? _accent : Colors.white70),
+                            color: value == action.$1
+                                ? _accent
+                                : Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant),
                         const SizedBox(height: 5),
                         Text(action.$2,
                             maxLines: 1,
@@ -729,7 +1046,8 @@ class _EditorNotice extends StatelessWidget {
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white12),
+          border:
+              Border.all(color: Theme.of(context).colorScheme.outlineVariant),
         ),
         child: Text(text, style: const TextStyle(fontSize: 12)),
       );
@@ -766,7 +1084,9 @@ class _DeviceChoices extends StatelessWidget {
                   color: Theme.of(context).colorScheme.surface,
                   borderRadius: BorderRadius.circular(18),
                   border: Border.all(
-                    color: selected ? _accent : Colors.white12,
+                    color: selected
+                        ? _accent
+                        : Theme.of(context).colorScheme.outlineVariant,
                     width: selected ? 2 : 1,
                   ),
                 ),

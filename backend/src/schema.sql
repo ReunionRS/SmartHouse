@@ -161,3 +161,17 @@ CREATE TABLE IF NOT EXISTS ai_action_confirmations (
 
 CREATE INDEX IF NOT EXISTS idx_ai_confirmations_user_status
   ON ai_action_confirmations (user_id, status, expires_at);
+
+CREATE TABLE IF NOT EXISTS scene_executions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  home_id TEXT NOT NULL DEFAULT '',
+  scene_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('success', 'partial', 'failed', 'confirmation_required')),
+  report JSONB NOT NULL DEFAULT '{}'::jsonb,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_scene_executions_user_started
+  ON scene_executions (user_id, started_at DESC);

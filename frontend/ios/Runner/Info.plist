@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Smart House использует микрофон для голосового ввода сообщений ассистенту.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Smart House преобразует вашу речь в текст для отправки ассистенту.</string>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Face ID используется для безопасного входа в Smart House.</string>
 	<key>CFBundleDevelopmentRegion</key>

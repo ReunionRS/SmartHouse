@@ -128,3 +128,39 @@ export const haWebSocket = async (userId, command) => {
     return webSocketRequest(refreshed, command);
   }
 };
+
+const waitForStateWithConnection = (connection, entityId, expectedState, timeoutMs) => {
+  if (!connection) throw Object.assign(new Error('Home Assistant не подключён'), { statusCode: 409 });
+  const wsUrl = (config.haInternalBaseUrl || connection.base_url).replace(/^http/, 'ws') + '/api/websocket';
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(wsUrl, { handshakeTimeout: 10000 });
+    let settled = false;
+    const finish = (value, error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.close();
+      if (error) reject(error); else resolve(value);
+    };
+    const timeout = setTimeout(() => finish(false), timeoutMs);
+    socket.on('error', (error) => finish(false, error));
+    socket.on('message', (raw) => {
+      const message = JSON.parse(raw.toString());
+      if (message.type === 'auth_required') socket.send(JSON.stringify({ type: 'auth', access_token: connection.accessToken }));
+      else if (message.type === 'auth_invalid') finish(false, Object.assign(new Error('Авторизация Home Assistant устарела'), { code: 'HA_AUTH_INVALID' }));
+      else if (message.type === 'auth_ok') socket.send(JSON.stringify({ id: 1, type: 'subscribe_events', event_type: 'state_changed' }));
+      else if (message.type === 'event' && message.event?.data?.entity_id === entityId
+        && message.event?.data?.new_state?.state === expectedState) finish(true);
+    });
+  });
+};
+
+export const haWaitForState = async (userId, entityId, expectedState, timeoutMs = 5000) => {
+  const connection = await getConnection(userId);
+  try {
+    return await waitForStateWithConnection(connection, entityId, expectedState, timeoutMs);
+  } catch (error) {
+    if (error?.code !== 'HA_AUTH_INVALID' || !connection?.refreshToken) throw error;
+    return waitForStateWithConnection(await refreshConnection(connection), entityId, expectedState, timeoutMs);
+  }
+};
